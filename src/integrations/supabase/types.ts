@@ -14,16 +14,297 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      assigned_tests: {
+        Row: {
+          assigned_at: string
+          assigned_by: string | null
+          exam_id: string
+          id: string
+          locked: boolean
+          student_id: string
+        }
+        Insert: {
+          assigned_at?: string
+          assigned_by?: string | null
+          exam_id: string
+          id?: string
+          locked?: boolean
+          student_id: string
+        }
+        Update: {
+          assigned_at?: string
+          assigned_by?: string | null
+          exam_id?: string
+          id?: string
+          locked?: boolean
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "assigned_tests_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exams: {
+        Row: {
+          category: Database["public"]["Enums"]["exam_category"]
+          created_at: string
+          created_by: string | null
+          description: string | null
+          duration_minutes: number
+          end_at: string | null
+          id: string
+          is_published: boolean
+          start_at: string | null
+          timer_enabled: boolean
+          title: string
+          total_questions: number
+          updated_at: string
+        }
+        Insert: {
+          category?: Database["public"]["Enums"]["exam_category"]
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          duration_minutes?: number
+          end_at?: string | null
+          id?: string
+          is_published?: boolean
+          start_at?: string | null
+          timer_enabled?: boolean
+          title: string
+          total_questions?: number
+          updated_at?: string
+        }
+        Update: {
+          category?: Database["public"]["Enums"]["exam_category"]
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          duration_minutes?: number
+          end_at?: string | null
+          id?: string
+          is_published?: boolean
+          start_at?: string | null
+          timer_enabled?: boolean
+          title?: string
+          total_questions?: number
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          avatar_url: string | null
+          class_name: string | null
+          created_at: string
+          email: string
+          full_name: string | null
+          id: string
+          roll_number: string | null
+          updated_at: string
+        }
+        Insert: {
+          avatar_url?: string | null
+          class_name?: string | null
+          created_at?: string
+          email: string
+          full_name?: string | null
+          id: string
+          roll_number?: string | null
+          updated_at?: string
+        }
+        Update: {
+          avatar_url?: string | null
+          class_name?: string | null
+          created_at?: string
+          email?: string
+          full_name?: string | null
+          id?: string
+          roll_number?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      questions: {
+        Row: {
+          correct_option: string
+          created_at: string
+          exam_id: string
+          id: string
+          marks: number
+          option_a: string
+          option_b: string
+          option_c: string
+          option_d: string
+          question_text: string
+        }
+        Insert: {
+          correct_option: string
+          created_at?: string
+          exam_id: string
+          id?: string
+          marks?: number
+          option_a: string
+          option_b: string
+          option_c: string
+          option_d: string
+          question_text: string
+        }
+        Update: {
+          correct_option?: string
+          created_at?: string
+          exam_id?: string
+          id?: string
+          marks?: number
+          option_a?: string
+          option_b?: string
+          option_c?: string
+          option_d?: string
+          question_text?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "questions_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      results: {
+        Row: {
+          answers: Json
+          auto_submitted: boolean
+          correct_count: number
+          exam_id: string
+          id: string
+          score: number
+          started_at: string
+          student_id: string
+          submitted_at: string
+          total_marks: number
+          total_questions: number
+        }
+        Insert: {
+          answers?: Json
+          auto_submitted?: boolean
+          correct_count?: number
+          exam_id: string
+          id?: string
+          score?: number
+          started_at?: string
+          student_id: string
+          submitted_at?: string
+          total_marks?: number
+          total_questions?: number
+        }
+        Update: {
+          answers?: Json
+          auto_submitted?: boolean
+          correct_count?: number
+          exam_id?: string
+          id?: string
+          score?: number
+          started_at?: string
+          student_id?: string
+          submitted_at?: string
+          total_marks?: number
+          total_questions?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "results_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_roles: {
+        Row: {
+          created_at: string
+          id: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          role: Database["public"]["Enums"]["app_role"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          role?: Database["public"]["Enums"]["app_role"]
+          user_id?: string
+        }
+        Relationships: []
+      }
+      violations: {
+        Row: {
+          created_at: string
+          detail: string | null
+          exam_id: string
+          id: string
+          student_id: string
+          violation: Database["public"]["Enums"]["violation_type"]
+        }
+        Insert: {
+          created_at?: string
+          detail?: string | null
+          exam_id: string
+          id?: string
+          student_id: string
+          violation: Database["public"]["Enums"]["violation_type"]
+        }
+        Update: {
+          created_at?: string
+          detail?: string | null
+          exam_id?: string
+          id?: string
+          student_id?: string
+          violation?: Database["public"]["Enums"]["violation_type"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "violations_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      has_role: {
+        Args: {
+          _role: Database["public"]["Enums"]["app_role"]
+          _user_id: string
+        }
+        Returns: boolean
+      }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "admin" | "student"
+      exam_category: "aptitude" | "softskill"
+      violation_type:
+        | "tab_switch"
+        | "fullscreen_exit"
+        | "visibility_hidden"
+        | "copy_paste"
+        | "right_click"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +431,16 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      app_role: ["admin", "student"],
+      exam_category: ["aptitude", "softskill"],
+      violation_type: [
+        "tab_switch",
+        "fullscreen_exit",
+        "visibility_hidden",
+        "copy_paste",
+        "right_click",
+      ],
+    },
   },
 } as const
