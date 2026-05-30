@@ -19,10 +19,18 @@ function ResultPage() {
       const [{ data: result }, { data: exam }, { data: violations }] = await Promise.all([
         supabase.from("results").select("*").eq("exam_id", examId).eq("student_id", user!.id).maybeSingle(),
         supabase.from("exams").select("*").eq("id", examId).maybeSingle(),
-        supabase.from("violations").select("violation").eq("exam_id", examId).eq("student_id", user!.id),
+        supabase.from("violations").select("violation, detail, created_at").eq("exam_id", examId).eq("student_id", user!.id).order("created_at"),
+        supabase.from("profiles").select("full_name, email, roll_number, class_name").eq("id", user!.id).maybeSingle(),
       ]);
-      return { result, exam, violations: violations ?? [] };
+      return { result, exam, violations: violations ?? [], profile: arguments };
     },
+    enabled: !!user,
+  });
+
+  // refetch profile cleanly
+  const profileQ = useQuery({
+    queryKey: ["my-profile", user?.id],
+    queryFn: async () => (await supabase.from("profiles").select("full_name, email, roll_number, class_name").eq("id", user!.id).maybeSingle()).data,
     enabled: !!user,
   });
 
