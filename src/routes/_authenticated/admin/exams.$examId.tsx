@@ -6,10 +6,11 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   upsertQuestionsFn, deleteQuestionFn, listExamQuestionsFn,
   listStudentsFn, assignExamFn, unassignExamFn, toggleLockFn,
-  examReportFn, updateExamFn, deleteExamFn,
+  examReportFn, updateExamFn, deleteExamFn, listClassesFn, studentViolationsFn,
 } from "@/lib/admin.functions";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, Trash2, Lock, Unlock, Download } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Lock, Unlock, Download, FileText, ShieldAlert, X } from "lucide-react";
+import { generateExamReportPdf, generateStudentResultPdf } from "@/lib/pdf";
 
 export const Route = createFileRoute("/_authenticated/admin/exams/$examId")({
   head: () => ({ meta: [{ title: "Manage exam · Admin" }] }),
@@ -137,34 +138,63 @@ function QuestionsTab({ examId }: { examId: string }) {
 function AssignTab({ examId }: { examId: string }) {
   const qc = useQueryClient();
   const listSt = useServerFn(listStudentsFn);
+  const listCls = useServerFn(listClassesFn);
   const assign = useServerFn(assignExamFn);
   const unassign = useServerFn(unassignExamFn);
   const lockFn = useServerFn(toggleLockFn);
   const [search, setSearch] = useState("");
+  const [classFilter, setClassFilter] = useState("");
 
-  const studentsQ = useQuery({ queryKey: ["students", search], queryFn: () => listSt({ data: { search } }) });
+  const classesQ = useQuery({ queryKey: ["classes"], queryFn: () => listCls() });
+  const studentsQ = useQuery({
+    queryKey: ["students", search, classFilter],
+    queryFn: () => listSt({ data: { search, class_name: classFilter || undefined } }),
+  });
   const assignedQ = useQuery({
     queryKey: ["assigned", examId],
     queryFn: async () => {
-      const { data } = await supabase.from("assigned_tests").select("student_id, locked, profiles(full_name, email, roll_number)").eq("exam_id", examId);
+      const { data } = await supabase.from("assigned_tests").select("student_id, locked, profiles(full_name, email, roll_number, class_name)").eq("exam_id", examId);
       return data ?? [];
     },
   });
 
   const assignedIds = new Set((assignedQ.data ?? []).map((a: any) => a.student_id));
+  const available = (studentsQ.data?.students ?? []).filter((s: any) => !assignedIds.has(s.id));
+
+  const assignAllVisible = async () => {
+    if (!available.length) return;
+    await assign({ data: { exam_id: examId, student_ids: available.map((s: any) => s.id) } });
+    qc.invalidateQueries({ queryKey: ["assigned", examId] });
+    toast.success(`Assigned ${available.length} student(s)`);
+  };
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div>
         <h3 className="mb-2 text-sm font-semibold">Available students</h3>
-        <input placeholder="Search by name, email, roll…" value={search} onChange={(e) => setSearch(e.target.value)} className="mb-3 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" />
+        <div className="mb-3 grid grid-cols-[1fr_140px] gap-2">
+          <input placeholder="Search by name, email, roll…" value={search} onChange={(e) => setSearch(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" />
+          <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="h-9 rounded-md border border-input bg-background px-2 text-sm">
+            <option value="">All classes</option>
+            {(classesQ.data?.classes ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        {classFilter && available.length > 0 && (
+          <button onClick={assignAllVisible} className="mb-2 inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90">
+            <Plus className="h-3 w-3" /> Assign all in "{classFilter}" ({available.length})
+          </button>
+        )}
         <div className="space-y-1 max-h-[500px] overflow-y-auto rounded-lg border border-border bg-card p-2">
-          {(studentsQ.data?.students ?? []).filter((s: any) => !assignedIds.has(s.id)).map((s: any) => (
+          {available.map((s: any) => (
             <div key={s.id} className="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-secondary">
-              <div><p className="font-medium">{s.full_name || s.email}</p><p className="text-xs text-muted-foreground">{s.email}</p></div>
+              <div>
+                <p className="font-medium">{s.full_name || s.email}</p>
+                <p className="text-xs text-muted-foreground">{s.email}{s.class_name ? ` · ${s.class_name}` : ""}</p>
+              </div>
               <button onClick={async () => { await assign({ data: { exam_id: examId, student_ids: [s.id] } }); qc.invalidateQueries({ queryKey: ["assigned", examId] }); toast.success("Assigned"); }} className="text-xs font-medium text-accent hover:underline">Assign</button>
             </div>
           ))}
+          {available.length === 0 && <p className="px-3 py-4 text-xs text-muted-foreground">No matching students.</p>}
         </div>
       </div>
       <div>
@@ -172,7 +202,10 @@ function AssignTab({ examId }: { examId: string }) {
         <div className="space-y-1 max-h-[540px] overflow-y-auto rounded-lg border border-border bg-card p-2">
           {(assignedQ.data ?? []).map((a: any) => (
             <div key={a.student_id} className="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-secondary">
-              <div><p className="font-medium">{a.profiles?.full_name || a.profiles?.email}</p><p className="text-xs text-muted-foreground">{a.profiles?.email}</p></div>
+              <div>
+                <p className="font-medium">{a.profiles?.full_name || a.profiles?.email}</p>
+                <p className="text-xs text-muted-foreground">{a.profiles?.email}{a.profiles?.class_name ? ` · ${a.profiles.class_name}` : ""}</p>
+              </div>
               <div className="flex items-center gap-2">
                 <button onClick={async () => { await lockFn({ data: { exam_id: examId, student_id: a.student_id, locked: !a.locked } }); qc.invalidateQueries({ queryKey: ["assigned", examId] }); }} className="text-muted-foreground hover:text-foreground">
                   {a.locked ? <Lock className="h-3.5 w-3.5 text-destructive" /> : <Unlock className="h-3.5 w-3.5" />}
@@ -190,6 +223,9 @@ function AssignTab({ examId }: { examId: string }) {
 function ResultsTab({ examId }: { examId: string }) {
   const report = useServerFn(examReportFn);
   const { data, isLoading } = useQuery({ queryKey: ["exam-report", examId], queryFn: () => report({ data: { exam_id: examId } }) });
+  const [classFilter, setClassFilter] = useState("");
+  const [violationFor, setViolationFor] = useState<string | null>(null);
+
   if (isLoading || !data) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
   const profileMap = new Map(data.profiles.map((p: any) => [p.id, p]));
@@ -197,16 +233,34 @@ function ResultsTab({ examId }: { examId: string }) {
   const violCounts: Record<string, number> = {};
   for (const v of data.violations) violCounts[v.student_id] = (violCounts[v.student_id] ?? 0) + 1;
 
+  const classes = Array.from(new Set(data.profiles.map((p: any) => p.class_name).filter(Boolean))).sort() as string[];
+  const filteredAssignments = data.assignments.filter((a: any) => {
+    if (!classFilter) return true;
+    const p = profileMap.get(a.student_id) as any;
+    return p?.class_name === classFilter;
+  });
+
+  const buildRows = () => filteredAssignments.map((a: any) => {
+    const p = profileMap.get(a.student_id) as any;
+    const r = resultMap.get(a.student_id) as any;
+    return {
+      name: p?.full_name ?? "", email: p?.email ?? "", roll: p?.roll_number ?? "", class_name: p?.class_name ?? "",
+      score: String(r?.score ?? ""), total: String(r?.total_marks ?? ""), correct: String(r?.correct_count ?? ""),
+      violations: violCounts[a.student_id] ?? 0,
+      status: r ? (r.auto_submitted ? "Auto-submitted" : "Submitted") : "Pending",
+    };
+  });
+
   const exportCsv = () => {
-    const rows = [["Name","Email","Roll","Score","Total","Correct","Violations","Auto-submitted","Submitted at"]];
-    for (const a of data.assignments) {
+    const rows = [["Name","Email","Roll","Class","Score","Total","Correct","Violations","Status","Submitted at"]];
+    for (const a of filteredAssignments) {
       const p = profileMap.get(a.student_id) as any;
       const r = resultMap.get(a.student_id) as any;
       rows.push([
-        p?.full_name ?? "", p?.email ?? "", p?.roll_number ?? "",
-        r?.score ?? "", r?.total_marks ?? "", r?.correct_count ?? "",
+        p?.full_name ?? "", p?.email ?? "", p?.roll_number ?? "", p?.class_name ?? "",
+        String(r?.score ?? ""), String(r?.total_marks ?? ""), String(r?.correct_count ?? ""),
         String(violCounts[a.student_id] ?? 0),
-        r?.auto_submitted ? "yes" : "",
+        r ? (r.auto_submitted ? "Auto-submitted" : "Submitted") : "Pending",
         r?.submitted_at ?? "",
       ]);
     }
@@ -217,39 +271,146 @@ function ResultsTab({ examId }: { examId: string }) {
     URL.revokeObjectURL(url);
   };
 
+  const exportPdf = () => generateExamReportPdf({ exam: data.exam ?? {}, rows: buildRows() });
+
   return (
     <div>
-      <div className="mb-3 flex items-center justify-between">
-        <p className="text-xs text-muted-foreground">{data.assignments.length} assigned · {data.results.length} submitted</p>
-        <button onClick={exportCsv} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-secondary"><Download className="h-3 w-3" /> Export CSV</button>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <p className="text-xs text-muted-foreground">{filteredAssignments.length} of {data.assignments.length} assigned · {data.results.length} submitted</p>
+          <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="h-8 rounded-md border border-input bg-background px-2 text-xs">
+            <option value="">All classes</option>
+            {classes.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={exportCsv} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-secondary"><Download className="h-3 w-3" /> CSV</button>
+          <button onClick={exportPdf} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-secondary"><FileText className="h-3 w-3" /> PDF</button>
+        </div>
       </div>
       <div className="overflow-hidden rounded-lg border border-border bg-card">
         <table className="w-full text-sm">
           <thead className="bg-secondary text-xs uppercase text-muted-foreground"><tr>
             <th className="px-3 py-2 text-left font-medium">Student</th>
+            <th className="px-3 py-2 text-left font-medium">Class</th>
             <th className="px-3 py-2 text-left font-medium">Score</th>
             <th className="px-3 py-2 text-left font-medium">Correct</th>
             <th className="px-3 py-2 text-left font-medium">Violations</th>
             <th className="px-3 py-2 text-left font-medium">Status</th>
+            <th className="px-3 py-2" />
           </tr></thead>
           <tbody>
-            {data.assignments.map((a: any) => {
+            {filteredAssignments.map((a: any) => {
               const p = profileMap.get(a.student_id) as any;
               const r = resultMap.get(a.student_id) as any;
+              const vCount = violCounts[a.student_id] ?? 0;
               return (
                 <tr key={a.student_id} className="border-t border-border">
                   <td className="px-3 py-2"><p className="font-medium">{p?.full_name || p?.email}</p><p className="text-xs text-muted-foreground">{p?.email}</p></td>
+                  <td className="px-3 py-2 text-muted-foreground">{p?.class_name || "—"}</td>
                   <td className="px-3 py-2">{r ? `${r.score}/${r.total_marks}` : "—"}</td>
                   <td className="px-3 py-2">{r ? `${r.correct_count}/${r.total_questions}` : "—"}</td>
-                  <td className="px-3 py-2">{violCounts[a.student_id] ?? 0}</td>
+                  <td className="px-3 py-2">
+                    {vCount > 0 ? (
+                      <button onClick={() => setViolationFor(a.student_id)} className="inline-flex items-center gap-1 rounded-md bg-destructive/10 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/20">
+                        <ShieldAlert className="h-3 w-3" /> {vCount} · view
+                      </button>
+                    ) : <span className="text-xs text-muted-foreground">0</span>}
+                  </td>
                   <td className="px-3 py-2">
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${r ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>{r ? (r.auto_submitted ? "Auto-submitted" : "Submitted") : "Pending"}</span>
+                  </td>
+                  <td className="px-3 py-2 text-right">
+                    {r && <button onClick={() => setViolationFor(a.student_id)} className="text-xs font-medium text-accent hover:underline">Details</button>}
                   </td>
                 </tr>
               );
             })}
+            {filteredAssignments.length === 0 && (
+              <tr><td colSpan={7} className="px-3 py-8 text-center text-xs text-muted-foreground">No students match this filter.</td></tr>
+            )}
           </tbody>
         </table>
+      </div>
+      {violationFor && (
+        <ViolationDialog examId={examId} studentId={violationFor} examMeta={data.exam} onClose={() => setViolationFor(null)} />
+      )}
+    </div>
+  );
+}
+
+function ViolationDialog({ examId, studentId, examMeta, onClose }: { examId: string; studentId: string; examMeta: any; onClose: () => void }) {
+  const fn = useServerFn(studentViolationsFn);
+  const { data, isLoading } = useQuery({
+    queryKey: ["student-violations", examId, studentId],
+    queryFn: () => fn({ data: { exam_id: examId, student_id: studentId } }),
+  });
+
+  const downloadPdf = () => {
+    if (!data?.result) return toast.error("Student hasn't submitted yet");
+    generateStudentResultPdf({
+      exam: { title: examMeta?.title, category: examMeta?.category },
+      student: data.profile ?? {},
+      result: data.result,
+      violations: data.violations,
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-2xl rounded-lg border border-border bg-card p-6 shadow-xl max-h-[90vh] overflow-y-auto">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-base font-semibold">Student details & violation log</h3>
+            <p className="mt-0.5 text-xs text-muted-foreground">{examMeta?.title}</p>
+          </div>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="h-4 w-4" /></button>
+        </div>
+
+        {isLoading || !data ? <p className="mt-6 text-sm text-muted-foreground">Loading…</p> : (
+          <>
+            <dl className="mt-5 grid grid-cols-2 gap-3 rounded-md border border-border bg-background p-4 text-sm">
+              <div><dt className="text-xs text-muted-foreground">Name</dt><dd>{data.profile?.full_name || "—"}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">Email</dt><dd className="truncate">{data.profile?.email || "—"}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">Roll</dt><dd>{data.profile?.roll_number || "—"}</dd></div>
+              <div><dt className="text-xs text-muted-foreground">Class</dt><dd>{data.profile?.class_name || "—"}</dd></div>
+              {data.result && (
+                <>
+                  <div><dt className="text-xs text-muted-foreground">Score</dt><dd>{data.result.score}/{data.result.total_marks}</dd></div>
+                  <div><dt className="text-xs text-muted-foreground">Submitted</dt><dd>{new Date(data.result.submitted_at).toLocaleString()}</dd></div>
+                </>
+              )}
+            </dl>
+
+            <div className="mt-5 flex items-center justify-between">
+              <h4 className="text-sm font-semibold">Violation log ({data.violations.length})</h4>
+              <button onClick={downloadPdf} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-secondary">
+                <FileText className="h-3 w-3" /> Download PDF
+              </button>
+            </div>
+            <div className="mt-2 overflow-hidden rounded-md border border-border">
+              {data.violations.length === 0 ? (
+                <p className="px-4 py-6 text-center text-xs text-muted-foreground">No violations recorded for this student.</p>
+              ) : (
+                <table className="w-full text-xs">
+                  <thead className="bg-secondary text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <tr><th className="px-3 py-2 text-left">#</th><th className="px-3 py-2 text-left">Type</th><th className="px-3 py-2 text-left">Detail</th><th className="px-3 py-2 text-left">Time</th></tr>
+                  </thead>
+                  <tbody>
+                    {data.violations.map((v: any, i: number) => (
+                      <tr key={i} className="border-t border-border">
+                        <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
+                        <td className="px-3 py-2"><span className="rounded bg-destructive/10 px-1.5 py-0.5 font-medium text-destructive">{v.violation}</span></td>
+                        <td className="px-3 py-2 text-muted-foreground">{v.detail || "—"}</td>
+                        <td className="px-3 py-2 text-muted-foreground">{new Date(v.created_at).toLocaleString()}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

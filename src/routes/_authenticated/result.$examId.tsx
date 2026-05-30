@@ -2,7 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
-import { CheckCircle2, XCircle, ArrowLeft } from "lucide-react";
+import { CheckCircle2, XCircle, ArrowLeft, Download } from "lucide-react";
+import { generateStudentResultPdf } from "@/lib/pdf";
 
 export const Route = createFileRoute("/_authenticated/result/$examId")({
   head: () => ({ meta: [{ title: "Exam result · CIE Exam Portal" }] }),
@@ -15,12 +16,13 @@ function ResultPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["result", examId, user?.id],
     queryFn: async () => {
-      const [{ data: result }, { data: exam }, { data: violations }] = await Promise.all([
+      const [{ data: result }, { data: exam }, { data: violations }, { data: profile }] = await Promise.all([
         supabase.from("results").select("*").eq("exam_id", examId).eq("student_id", user!.id).maybeSingle(),
         supabase.from("exams").select("*").eq("id", examId).maybeSingle(),
-        supabase.from("violations").select("violation").eq("exam_id", examId).eq("student_id", user!.id),
+        supabase.from("violations").select("violation, detail, created_at").eq("exam_id", examId).eq("student_id", user!.id).order("created_at"),
+        supabase.from("profiles").select("full_name, email, roll_number, class_name").eq("id", user!.id).maybeSingle(),
       ]);
-      return { result, exam, violations: violations ?? [] };
+      return { result, exam, violations: violations ?? [], profile };
     },
     enabled: !!user,
   });
@@ -28,15 +30,27 @@ function ResultPage() {
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
   if (!data?.result) return <p className="text-sm text-muted-foreground">No result found.</p>;
 
-  const { result, exam, violations } = data;
+  const { result, exam, violations, profile } = data;
   const pct = result.total_marks ? Math.round((result.score / result.total_marks) * 100) : 0;
   const passed = pct >= 50;
 
+  const downloadPdf = () => generateStudentResultPdf({
+    exam: { title: exam?.title, category: exam?.category },
+    student: profile ?? { email: user?.email },
+    result,
+    violations,
+  });
+
   return (
     <div className="mx-auto max-w-2xl">
-      <Link to="/dashboard" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-3 w-3" /> Back to dashboard
-      </Link>
+      <div className="flex items-center justify-between">
+        <Link to="/dashboard" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-3 w-3" /> Back to dashboard
+        </Link>
+        <button onClick={downloadPdf} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-secondary">
+          <Download className="h-3 w-3" /> Download PDF
+        </button>
+      </div>
       <div className="mt-4 rounded-lg border border-border bg-card p-8 shadow-[var(--shadow-card)]">
         <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">{exam?.category}</span>
         <h1 className="mt-1 text-2xl font-bold">{exam?.title}</h1>
