@@ -2,7 +2,8 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
-import { CheckCircle2, XCircle, ArrowLeft } from "lucide-react";
+import { CheckCircle2, XCircle, ArrowLeft, Download } from "lucide-react";
+import { generateStudentResultPdf } from "@/lib/pdf";
 
 export const Route = createFileRoute("/_authenticated/result/$examId")({
   head: () => ({ meta: [{ title: "Exam result · CIE Exam Portal" }] }),
