@@ -121,7 +121,10 @@ export const listExamQuestionsFn = createServerFn({ method: "POST" })
 
 export const listStudentsFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: any) => z.object({ search: z.string().max(100).optional() }).parse(d ?? {}))
+  .inputValidator((d: any) => z.object({
+    search: z.string().max(100).optional(),
+    class_name: z.string().max(100).optional(),
+  }).parse(d ?? {}))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     await assertAdmin(supabase, userId);
@@ -129,8 +132,39 @@ export const listStudentsFn = createServerFn({ method: "POST" })
     if (data.search) {
       q = q.or(`full_name.ilike.%${data.search}%,email.ilike.%${data.search}%,roll_number.ilike.%${data.search}%`);
     }
+    if (data.class_name) q = q.eq("class_name", data.class_name);
     const { data: students } = await q.limit(500);
     return { students: students ?? [] };
+  });
+
+export const listClassesFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { data } = await supabase.from("profiles").select("class_name").not("class_name", "is", null).limit(2000);
+    const set = new Set<string>();
+    (data ?? []).forEach((r: any) => r.class_name && set.add(r.class_name));
+    return { classes: Array.from(set).sort() };
+  });
+
+export const studentViolationsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({ exam_id: z.string().uuid(), student_id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { data: violations } = await supabase
+      .from("violations")
+      .select("violation, detail, created_at")
+      .eq("exam_id", data.exam_id)
+      .eq("student_id", data.student_id)
+      .order("created_at");
+    const { data: profile } = await supabase
+      .from("profiles").select("full_name, email, roll_number, class_name").eq("id", data.student_id).maybeSingle();
+    const { data: result } = await supabase
+      .from("results").select("*").eq("exam_id", data.exam_id).eq("student_id", data.student_id).maybeSingle();
+    return { violations: violations ?? [], profile, result };
   });
 
 export const assignExamFn = createServerFn({ method: "POST" })
