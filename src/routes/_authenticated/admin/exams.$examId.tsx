@@ -138,34 +138,63 @@ function QuestionsTab({ examId }: { examId: string }) {
 function AssignTab({ examId }: { examId: string }) {
   const qc = useQueryClient();
   const listSt = useServerFn(listStudentsFn);
+  const listCls = useServerFn(listClassesFn);
   const assign = useServerFn(assignExamFn);
   const unassign = useServerFn(unassignExamFn);
   const lockFn = useServerFn(toggleLockFn);
   const [search, setSearch] = useState("");
+  const [classFilter, setClassFilter] = useState("");
 
-  const studentsQ = useQuery({ queryKey: ["students", search], queryFn: () => listSt({ data: { search } }) });
+  const classesQ = useQuery({ queryKey: ["classes"], queryFn: () => listCls() });
+  const studentsQ = useQuery({
+    queryKey: ["students", search, classFilter],
+    queryFn: () => listSt({ data: { search, class_name: classFilter || undefined } }),
+  });
   const assignedQ = useQuery({
     queryKey: ["assigned", examId],
     queryFn: async () => {
-      const { data } = await supabase.from("assigned_tests").select("student_id, locked, profiles(full_name, email, roll_number)").eq("exam_id", examId);
+      const { data } = await supabase.from("assigned_tests").select("student_id, locked, profiles(full_name, email, roll_number, class_name)").eq("exam_id", examId);
       return data ?? [];
     },
   });
 
   const assignedIds = new Set((assignedQ.data ?? []).map((a: any) => a.student_id));
+  const available = (studentsQ.data?.students ?? []).filter((s: any) => !assignedIds.has(s.id));
+
+  const assignAllVisible = async () => {
+    if (!available.length) return;
+    await assign({ data: { exam_id: examId, student_ids: available.map((s: any) => s.id) } });
+    qc.invalidateQueries({ queryKey: ["assigned", examId] });
+    toast.success(`Assigned ${available.length} student(s)`);
+  };
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <div>
         <h3 className="mb-2 text-sm font-semibold">Available students</h3>
-        <input placeholder="Search by name, email, roll…" value={search} onChange={(e) => setSearch(e.target.value)} className="mb-3 h-9 w-full rounded-md border border-input bg-background px-3 text-sm" />
+        <div className="mb-3 grid grid-cols-[1fr_140px] gap-2">
+          <input placeholder="Search by name, email, roll…" value={search} onChange={(e) => setSearch(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" />
+          <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="h-9 rounded-md border border-input bg-background px-2 text-sm">
+            <option value="">All classes</option>
+            {(classesQ.data?.classes ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        {classFilter && available.length > 0 && (
+          <button onClick={assignAllVisible} className="mb-2 inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90">
+            <Plus className="h-3 w-3" /> Assign all in "{classFilter}" ({available.length})
+          </button>
+        )}
         <div className="space-y-1 max-h-[500px] overflow-y-auto rounded-lg border border-border bg-card p-2">
-          {(studentsQ.data?.students ?? []).filter((s: any) => !assignedIds.has(s.id)).map((s: any) => (
+          {available.map((s: any) => (
             <div key={s.id} className="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-secondary">
-              <div><p className="font-medium">{s.full_name || s.email}</p><p className="text-xs text-muted-foreground">{s.email}</p></div>
+              <div>
+                <p className="font-medium">{s.full_name || s.email}</p>
+                <p className="text-xs text-muted-foreground">{s.email}{s.class_name ? ` · ${s.class_name}` : ""}</p>
+              </div>
               <button onClick={async () => { await assign({ data: { exam_id: examId, student_ids: [s.id] } }); qc.invalidateQueries({ queryKey: ["assigned", examId] }); toast.success("Assigned"); }} className="text-xs font-medium text-accent hover:underline">Assign</button>
             </div>
           ))}
+          {available.length === 0 && <p className="px-3 py-4 text-xs text-muted-foreground">No matching students.</p>}
         </div>
       </div>
       <div>
@@ -173,7 +202,10 @@ function AssignTab({ examId }: { examId: string }) {
         <div className="space-y-1 max-h-[540px] overflow-y-auto rounded-lg border border-border bg-card p-2">
           {(assignedQ.data ?? []).map((a: any) => (
             <div key={a.student_id} className="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-secondary">
-              <div><p className="font-medium">{a.profiles?.full_name || a.profiles?.email}</p><p className="text-xs text-muted-foreground">{a.profiles?.email}</p></div>
+              <div>
+                <p className="font-medium">{a.profiles?.full_name || a.profiles?.email}</p>
+                <p className="text-xs text-muted-foreground">{a.profiles?.email}{a.profiles?.class_name ? ` · ${a.profiles.class_name}` : ""}</p>
+              </div>
               <div className="flex items-center gap-2">
                 <button onClick={async () => { await lockFn({ data: { exam_id: examId, student_id: a.student_id, locked: !a.locked } }); qc.invalidateQueries({ queryKey: ["assigned", examId] }); }} className="text-muted-foreground hover:text-foreground">
                   {a.locked ? <Lock className="h-3.5 w-3.5 text-destructive" /> : <Unlock className="h-3.5 w-3.5" />}
