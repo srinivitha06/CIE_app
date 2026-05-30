@@ -6,10 +6,11 @@ import { supabase } from "@/integrations/supabase/client";
 import {
   upsertQuestionsFn, deleteQuestionFn, listExamQuestionsFn,
   listStudentsFn, assignExamFn, unassignExamFn, toggleLockFn,
-  examReportFn, updateExamFn, deleteExamFn,
+  examReportFn, updateExamFn, deleteExamFn, listClassesFn, studentViolationsFn,
 } from "@/lib/admin.functions";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, Trash2, Lock, Unlock, Download } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Lock, Unlock, Download, FileText, ShieldAlert, X } from "lucide-react";
+import { generateExamReportPdf, generateStudentResultPdf } from "@/lib/pdf";
 
 export const Route = createFileRoute("/_authenticated/admin/exams/$examId")({
   head: () => ({ meta: [{ title: "Manage exam · Admin" }] }),
