@@ -4,6 +4,23 @@ import { useAuth } from "@/lib/auth-context";
 import { supabase } from "@/integrations/supabase/client";
 import { Clock, FileText, CheckCircle2, ArrowRight } from "lucide-react";
 
+type Exam = {
+  id: string;
+  title: string;
+  description: string | null;
+  category: string;
+  duration_minutes: number;
+  total_questions: number;
+  start_at: string | null;
+  end_at: string | null;
+};
+
+type Assignment = {
+  exam_id: string;
+  locked: boolean;
+  exams: Exam | null;
+};
+
 export const Route = createFileRoute("/_authenticated/dashboard")({
   head: () => ({ meta: [{ title: "My Assessments · CIE Exam Portal" }] }),
   component: StudentDashboard,
@@ -53,7 +70,7 @@ function StudentDashboard() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2">
-          {items.map((a: any) => {
+          {items.map((a: Assignment) => {
             const exam = a.exams;
             if (!exam) return null;
             const result = data!.resultMap.get(a.exam_id);
@@ -126,7 +143,6 @@ function StudentDashboard() {
                     <Link
                       to="/exam/$examId"
                       params={{ examId: a.exam_id }}
-                      disabled={disabled as any}
                       className={`inline-flex h-9 items-center gap-1 rounded-md px-4 text-xs font-medium ${disabled ? "pointer-events-none bg-muted text-muted-foreground" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
                     >
                       Start exam <ArrowRight className="h-3 w-3" />
