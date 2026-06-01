@@ -12,7 +12,12 @@ function AdminHome() {
   const { data } = useQuery({
     queryKey: ["admin-overview"],
     queryFn: async () => {
-      const [{ count: examsCount }, { count: studentsCount }, { count: resultsCount }, { data: exams }] = await Promise.all([
+      const [
+        { count: examsCount },
+        { count: studentsCount },
+        { count: resultsCount },
+        { data: exams },
+      ] = await Promise.all([
         supabase.from("exams").select("id", { count: "exact", head: true }),
         supabase.from("profiles").select("id", { count: "exact", head: true }),
         supabase.from("results").select("id", { count: "exact", head: true }),
@@ -28,9 +33,14 @@ function AdminHome() {
       <div className="mb-8 flex items-end justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Admin dashboard</h1>
-          <p className="mt-1 text-sm text-muted-foreground">Manage assessments, questions, assignments and results.</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Manage assessments, questions, assignments and results.
+          </p>
         </div>
-        <Link to="/admin/exams/new" className="inline-flex h-10 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90">
+        <Link
+          to="/admin/exams/new"
+          className="inline-flex h-10 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+        >
           <Plus className="h-4 w-4" /> New exam
         </Link>
       </div>
@@ -62,17 +72,29 @@ function AdminHome() {
                 <td className="px-4 py-3 text-muted-foreground">{e.duration_minutes} min</td>
                 <td className="px-4 py-3 text-muted-foreground">{e.total_questions}</td>
                 <td className="px-4 py-3">
-                  <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${e.is_published ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${e.is_published ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}
+                  >
                     {e.is_published ? "Published" : "Draft"}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-right">
-                  <Link to="/admin/exams/$examId" params={{ examId: e.id }} className="text-xs font-medium text-accent hover:underline">Manage →</Link>
+                  <Link
+                    to="/admin/exams/$examId"
+                    params={{ examId: e.id }}
+                    className="text-xs font-medium text-accent hover:underline"
+                  >
+                    Manage →
+                  </Link>
                 </td>
               </tr>
             ))}
             {(data?.exams ?? []).length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-xs text-muted-foreground">No exams yet. Create your first one.</td></tr>
+              <tr>
+                <td colSpan={6} className="px-4 py-10 text-center text-xs text-muted-foreground">
+                  No exams yet. Create your first one.
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
