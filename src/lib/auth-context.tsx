@@ -14,6 +14,21 @@ interface AuthCtx {
 
 const Ctx = createContext<AuthCtx | undefined>(undefined);
 
+async function loadUserRole(userId: string): Promise<Role> {
+  const { data, error } = await supabase
+    .from("user_roles")
+    .select("role")
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("Unable to load user role", error);
+    return null;
+  }
+
+  const roles = (data ?? []).map((r) => r.role as string);
+  return roles.includes("admin") ? "admin" : roles.includes("student") ? "student" : null;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -21,37 +36,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
+    let cancelled = false;
+    let sequence = 0;
+
+    const applySession = async (s: Session | null) => {
+      const requestId = ++sequence;
+      if (cancelled) return;
+
       setSession(s);
       setUser(s?.user ?? null);
-      if (s?.user) {
-        // fetch role async (deferred to avoid deadlock)
-        setTimeout(async () => {
-          const { data } = await supabase
-            .from("user_roles")
-            .select("role")
-            .eq("user_id", s.user.id);
-          const roles = (data ?? []).map((r) => r.role as string);
-          setRole(roles.includes("admin") ? "admin" : roles.includes("student") ? "student" : null);
-        }, 0);
-      } else {
+
+      if (!s?.user) {
         setRole(null);
+        setLoading(false);
+        return;
       }
+
+      setLoading(true);
+      setRole(null);
+      const nextRole = await loadUserRole(s.user.id);
+      if (cancelled || requestId !== sequence) return;
+      setRole(nextRole);
+      setLoading(false);
+    };
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_e, s) => {
+      void applySession(s);
     });
 
     supabase.auth.getSession().then(({ data: { session: s } }) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-      setLoading(false);
-      if (s?.user) {
-        supabase.from("user_roles").select("role").eq("user_id", s.user.id).then(({ data }) => {
-          const roles = (data ?? []).map((r) => r.role as string);
-          setRole(roles.includes("admin") ? "admin" : roles.includes("student") ? "student" : null);
-        });
-      }
+      void applySession(s);
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      cancelled = true;
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signOut = async () => {
