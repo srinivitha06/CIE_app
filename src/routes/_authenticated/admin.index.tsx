@@ -20,6 +20,7 @@ function AdminHome() {
       ]);
       return { examsCount, studentsCount, resultsCount, exams: exams ?? [] };
     },
+    retry: false,
   });
 
   return (
