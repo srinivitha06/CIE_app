@@ -11,7 +11,6 @@ export const Route = createFileRoute("/_authenticated/dashboard")({
 
 function StudentDashboard() {
   const { user, role } = useAuth();
-  if (role === "admin") return <Navigate to="/admin" replace />;
 
   const { data, isLoading } = useQuery({
     queryKey: ["student-dashboard", user?.id],
@@ -23,8 +22,10 @@ function StudentDashboard() {
       const resultMap = new Map((results ?? []).map((r) => [r.exam_id, r]));
       return { assignments: assignments ?? [], resultMap };
     },
-    enabled: !!user,
+    enabled: !!user && role !== "admin",
   });
+
+  if (role === "admin") return <Navigate to="/admin" replace />;
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading your tests…</p>;
 
