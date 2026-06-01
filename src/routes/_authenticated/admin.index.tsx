@@ -1,7 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import { Plus, Users, FileText, BarChart3 } from "lucide-react";
+import { Plus, Users, FileText, BarChart3, type LucideIcon } from "lucide-react";
 
 export const Route = createFileRoute("/_authenticated/admin/")({
   head: () => ({ meta: [{ title: "Admin · CIE Exam Portal" }] }),
@@ -103,7 +103,7 @@ function AdminHome() {
   );
 }
 
-function Stat({ icon: Icon, label, value }: { icon: any; label: string; value: number }) {
+function Stat({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: number }) {
   return (
     <div className="rounded-lg border border-border bg-card p-5 shadow-[var(--shadow-card)]">
       <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
