@@ -97,6 +97,62 @@ export type Database = {
         }
         Relationships: []
       }
+      group_members: {
+        Row: {
+          added_at: string
+          group_id: string
+          id: string
+          student_id: string
+        }
+        Insert: {
+          added_at?: string
+          group_id: string
+          id?: string
+          student_id: string
+        }
+        Update: {
+          added_at?: string
+          group_id?: string
+          id?: string
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "group_members_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      groups: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
@@ -141,6 +197,7 @@ export type Database = {
           option_b: string
           option_c: string
           option_d: string
+          position: number
           question_text: string
         }
         Insert: {
@@ -153,6 +210,7 @@ export type Database = {
           option_b: string
           option_c: string
           option_d: string
+          position?: number
           question_text: string
         }
         Update: {
@@ -165,6 +223,7 @@ export type Database = {
           option_b?: string
           option_c?: string
           option_d?: string
+          position?: number
           question_text?: string
         }
         Relationships: [
