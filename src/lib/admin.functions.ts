@@ -85,13 +85,55 @@ export const upsertQuestionsFn = createServerFn({ method: "POST" })
     if (data.replace) {
       await supabase.from("questions").delete().eq("exam_id", data.exam_id);
     }
-    const rows = data.questions.map((q) => ({ ...q, exam_id: data.exam_id }));
+    const { data: maxRow } = await supabase
+      .from("questions").select("position").eq("exam_id", data.exam_id)
+      .order("position", { ascending: false }).limit(1).maybeSingle();
+    let pos = (maxRow?.position ?? 0);
+    const rows = data.questions.map((q) => ({ ...q, exam_id: data.exam_id, position: ++pos }));
     const { error } = await supabase.from("questions").insert(rows);
     if (error) throw new Error(error.message);
-    // update total_questions
     const { count } = await supabase.from("questions").select("id", { count: "exact", head: true }).eq("exam_id", data.exam_id);
     await supabase.from("exams").update({ total_questions: count ?? rows.length }).eq("id", data.exam_id);
     return { ok: true, inserted: rows.length };
+  });
+
+export const updateQuestionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    id: z.string().uuid(),
+    question_text: z.string().min(1).max(2000),
+    option_a: z.string().min(1).max(500),
+    option_b: z.string().min(1).max(500),
+    option_c: z.string().min(1).max(500),
+    option_d: z.string().min(1).max(500),
+    correct_option: z.enum(["A","B","C","D"]),
+    marks: z.number().int().min(1).max(100),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { id, ...patch } = data;
+    const { error } = await supabase.from("questions").update(patch).eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const reorderQuestionsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    exam_id: z.string().uuid(),
+    ordered_ids: z.array(z.string().uuid()).min(1).max(1000),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    for (let i = 0; i < data.ordered_ids.length; i++) {
+      const { error } = await supabase.from("questions")
+        .update({ position: i + 1 })
+        .eq("id", data.ordered_ids[i]).eq("exam_id", data.exam_id);
+      if (error) throw new Error(error.message);
+    }
+    return { ok: true };
   });
 
 export const deleteQuestionFn = createServerFn({ method: "POST" })
@@ -115,7 +157,8 @@ export const listExamQuestionsFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     await assertAdmin(supabase, userId);
-    const { data: questions } = await supabase.from("questions").select("*").eq("exam_id", data.exam_id).order("created_at");
+    const { data: questions } = await supabase.from("questions").select("*")
+      .eq("exam_id", data.exam_id).order("position", { ascending: true }).order("created_at");
     return { questions: questions ?? [] };
   });
 
