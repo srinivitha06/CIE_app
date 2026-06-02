@@ -17,6 +17,7 @@ import { Route as AuthenticatedAdminRouteImport } from './routes/_authenticated/
 import { Route as AuthenticatedAdminIndexRouteImport } from './routes/_authenticated/admin.index'
 import { Route as AuthenticatedResultExamIdRouteImport } from './routes/_authenticated/result.$examId'
 import { Route as AuthenticatedExamExamIdRouteImport } from './routes/_authenticated/exam.$examId'
+import { Route as AuthenticatedAdminGroupsRouteImport } from './routes/_authenticated/admin/groups'
 import { Route as AuthenticatedAdminExamsNewRouteImport } from './routes/_authenticated/admin/exams.new'
 import { Route as AuthenticatedAdminExamsExamIdRouteImport } from './routes/_authenticated/admin/exams.$examId'
 
@@ -60,6 +61,12 @@ const AuthenticatedExamExamIdRoute = AuthenticatedExamExamIdRouteImport.update({
   path: '/exam/$examId',
   getParentRoute: () => AuthenticatedRoute,
 } as any)
+const AuthenticatedAdminGroupsRoute =
+  AuthenticatedAdminGroupsRouteImport.update({
+    id: '/groups',
+    path: '/groups',
+    getParentRoute: () => AuthenticatedAdminRoute,
+  } as any)
 const AuthenticatedAdminExamsNewRoute =
   AuthenticatedAdminExamsNewRouteImport.update({
     id: '/exams/new',
@@ -78,6 +85,7 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/admin': typeof AuthenticatedAdminRouteWithChildren
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/admin/groups': typeof AuthenticatedAdminGroupsRoute
   '/exam/$examId': typeof AuthenticatedExamExamIdRoute
   '/result/$examId': typeof AuthenticatedResultExamIdRoute
   '/admin/': typeof AuthenticatedAdminIndexRoute
@@ -88,6 +96,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/login': typeof LoginRoute
   '/dashboard': typeof AuthenticatedDashboardRoute
+  '/admin/groups': typeof AuthenticatedAdminGroupsRoute
   '/exam/$examId': typeof AuthenticatedExamExamIdRoute
   '/result/$examId': typeof AuthenticatedResultExamIdRoute
   '/admin': typeof AuthenticatedAdminIndexRoute
@@ -101,6 +110,7 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_authenticated/admin': typeof AuthenticatedAdminRouteWithChildren
   '/_authenticated/dashboard': typeof AuthenticatedDashboardRoute
+  '/_authenticated/admin/groups': typeof AuthenticatedAdminGroupsRoute
   '/_authenticated/exam/$examId': typeof AuthenticatedExamExamIdRoute
   '/_authenticated/result/$examId': typeof AuthenticatedResultExamIdRoute
   '/_authenticated/admin/': typeof AuthenticatedAdminIndexRoute
@@ -114,6 +124,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/admin'
     | '/dashboard'
+    | '/admin/groups'
     | '/exam/$examId'
     | '/result/$examId'
     | '/admin/'
@@ -124,6 +135,7 @@ export interface FileRouteTypes {
     | '/'
     | '/login'
     | '/dashboard'
+    | '/admin/groups'
     | '/exam/$examId'
     | '/result/$examId'
     | '/admin'
@@ -136,6 +148,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/_authenticated/admin'
     | '/_authenticated/dashboard'
+    | '/_authenticated/admin/groups'
     | '/_authenticated/exam/$examId'
     | '/_authenticated/result/$examId'
     | '/_authenticated/admin/'
@@ -207,6 +220,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedExamExamIdRouteImport
       parentRoute: typeof AuthenticatedRoute
     }
+    '/_authenticated/admin/groups': {
+      id: '/_authenticated/admin/groups'
+      path: '/groups'
+      fullPath: '/admin/groups'
+      preLoaderRoute: typeof AuthenticatedAdminGroupsRouteImport
+      parentRoute: typeof AuthenticatedAdminRoute
+    }
     '/_authenticated/admin/exams/new': {
       id: '/_authenticated/admin/exams/new'
       path: '/exams/new'
@@ -225,12 +245,14 @@ declare module '@tanstack/react-router' {
 }
 
 interface AuthenticatedAdminRouteChildren {
+  AuthenticatedAdminGroupsRoute: typeof AuthenticatedAdminGroupsRoute
   AuthenticatedAdminIndexRoute: typeof AuthenticatedAdminIndexRoute
   AuthenticatedAdminExamsExamIdRoute: typeof AuthenticatedAdminExamsExamIdRoute
   AuthenticatedAdminExamsNewRoute: typeof AuthenticatedAdminExamsNewRoute
 }
 
 const AuthenticatedAdminRouteChildren: AuthenticatedAdminRouteChildren = {
+  AuthenticatedAdminGroupsRoute: AuthenticatedAdminGroupsRoute,
   AuthenticatedAdminIndexRoute: AuthenticatedAdminIndexRoute,
   AuthenticatedAdminExamsExamIdRoute: AuthenticatedAdminExamsExamIdRoute,
   AuthenticatedAdminExamsNewRoute: AuthenticatedAdminExamsNewRoute,

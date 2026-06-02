@@ -85,13 +85,55 @@ export const upsertQuestionsFn = createServerFn({ method: "POST" })
     if (data.replace) {
       await supabase.from("questions").delete().eq("exam_id", data.exam_id);
     }
-    const rows = data.questions.map((q) => ({ ...q, exam_id: data.exam_id }));
+    const { data: maxRow } = await supabase
+      .from("questions").select("position").eq("exam_id", data.exam_id)
+      .order("position", { ascending: false }).limit(1).maybeSingle();
+    let pos = (maxRow?.position ?? 0);
+    const rows = data.questions.map((q) => ({ ...q, exam_id: data.exam_id, position: ++pos }));
     const { error } = await supabase.from("questions").insert(rows);
     if (error) throw new Error(error.message);
-    // update total_questions
     const { count } = await supabase.from("questions").select("id", { count: "exact", head: true }).eq("exam_id", data.exam_id);
     await supabase.from("exams").update({ total_questions: count ?? rows.length }).eq("id", data.exam_id);
     return { ok: true, inserted: rows.length };
+  });
+
+export const updateQuestionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    id: z.string().uuid(),
+    question_text: z.string().min(1).max(2000),
+    option_a: z.string().min(1).max(500),
+    option_b: z.string().min(1).max(500),
+    option_c: z.string().min(1).max(500),
+    option_d: z.string().min(1).max(500),
+    correct_option: z.enum(["A","B","C","D"]),
+    marks: z.number().int().min(1).max(100),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { id, ...patch } = data;
+    const { error } = await supabase.from("questions").update(patch).eq("id", id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const reorderQuestionsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    exam_id: z.string().uuid(),
+    ordered_ids: z.array(z.string().uuid()).min(1).max(1000),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    for (let i = 0; i < data.ordered_ids.length; i++) {
+      const { error } = await supabase.from("questions")
+        .update({ position: i + 1 })
+        .eq("id", data.ordered_ids[i]).eq("exam_id", data.exam_id);
+      if (error) throw new Error(error.message);
+    }
+    return { ok: true };
   });
 
 export const deleteQuestionFn = createServerFn({ method: "POST" })
@@ -115,7 +157,8 @@ export const listExamQuestionsFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     await assertAdmin(supabase, userId);
-    const { data: questions } = await supabase.from("questions").select("*").eq("exam_id", data.exam_id).order("created_at");
+    const { data: questions } = await supabase.from("questions").select("*")
+      .eq("exam_id", data.exam_id).order("position", { ascending: true }).order("created_at");
     return { questions: questions ?? [] };
   });
 
@@ -229,4 +272,121 @@ export const examReportFn = createServerFn({ method: "POST" })
     const { data: results } = await supabase.from("results").select("*").eq("exam_id", data.exam_id);
     const { data: violations } = await supabase.from("violations").select("student_id, violation").eq("exam_id", data.exam_id);
     return { exam, assignments: assignments ?? [], profiles: profiles ?? [], results: results ?? [], violations: violations ?? [] };
+  });
+
+// ===== Groups (cohorts) =====
+
+export const listGroupsFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { data: groups } = await supabase.from("groups").select("*").order("name");
+    const { data: members } = await supabase.from("group_members").select("group_id");
+    const counts: Record<string, number> = {};
+    (members ?? []).forEach((m: any) => { counts[m.group_id] = (counts[m.group_id] ?? 0) + 1; });
+    return { groups: (groups ?? []).map((g: any) => ({ ...g, member_count: counts[g.id] ?? 0 })) };
+  });
+
+export const createGroupFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    name: z.string().min(1).max(100),
+    description: z.string().max(500).optional().nullable(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { data: group, error } = await supabase.from("groups")
+      .insert({ name: data.name, description: data.description ?? null, created_by: userId })
+      .select().single();
+    if (error) throw new Error(error.message);
+    return { group };
+  });
+
+export const renameGroupFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    id: z.string().uuid(),
+    name: z.string().min(1).max(100),
+    description: z.string().max(500).optional().nullable(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { error } = await supabase.from("groups")
+      .update({ name: data.name, description: data.description ?? null }).eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteGroupFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { error } = await supabase.from("groups").delete().eq("id", data.id);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const getGroupFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { data: group } = await supabase.from("groups").select("*").eq("id", data.id).maybeSingle();
+    const { data: members } = await supabase.from("group_members").select("student_id").eq("group_id", data.id);
+    const ids = (members ?? []).map((m: any) => m.student_id);
+    const { data: profiles } = ids.length
+      ? await supabase.from("profiles").select("id, full_name, email, roll_number, class_name").in("id", ids)
+      : { data: [] };
+    return { group, students: profiles ?? [] };
+  });
+
+export const addGroupMembersFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    group_id: z.string().uuid(),
+    student_ids: z.array(z.string().uuid()).min(1).max(1000),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const rows = data.student_ids.map((sid) => ({ group_id: data.group_id, student_id: sid }));
+    const { error } = await supabase.from("group_members").upsert(rows, { onConflict: "group_id,student_id" });
+    if (error) throw new Error(error.message);
+    return { ok: true, added: rows.length };
+  });
+
+export const removeGroupMemberFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({ group_id: z.string().uuid(), student_id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    await supabase.from("group_members").delete()
+      .eq("group_id", data.group_id).eq("student_id", data.student_id);
+    return { ok: true };
+  });
+
+export const assignGroupsToExamFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    exam_id: z.string().uuid(),
+    group_ids: z.array(z.string().uuid()).min(1).max(50),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { data: members } = await supabase.from("group_members")
+      .select("student_id").in("group_id", data.group_ids);
+    const studentIds = Array.from(new Set((members ?? []).map((m: any) => m.student_id)));
+    if (!studentIds.length) return { ok: true, assigned: 0 };
+    const rows = studentIds.map((sid) => ({ exam_id: data.exam_id, student_id: sid, assigned_by: userId }));
+    const { error } = await supabase.from("assigned_tests").upsert(rows, { onConflict: "exam_id,student_id" });
+    if (error) throw new Error(error.message);
+    return { ok: true, assigned: rows.length };
   });

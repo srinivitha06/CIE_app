@@ -37,12 +37,20 @@ function AdminHome() {
             Manage assessments, questions, assignments and results.
           </p>
         </div>
-        <Link
-          to="/admin/exams/new"
-          className="inline-flex h-10 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
-        >
-          <Plus className="h-4 w-4" /> New exam
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/admin/groups"
+            className="inline-flex h-10 items-center gap-1.5 rounded-md border border-border bg-background px-4 text-sm font-medium hover:bg-secondary"
+          >
+            <Users className="h-4 w-4" /> Groups
+          </Link>
+          <Link
+            to="/admin/exams/new"
+            className="inline-flex h-10 items-center gap-1.5 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90"
+          >
+            <Plus className="h-4 w-4" /> New exam
+          </Link>
+        </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-3">

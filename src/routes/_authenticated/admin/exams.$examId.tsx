@@ -1,15 +1,16 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { useState, useEffect } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  upsertQuestionsFn, deleteQuestionFn, listExamQuestionsFn,
+  upsertQuestionsFn, deleteQuestionFn, listExamQuestionsFn, updateQuestionFn, reorderQuestionsFn,
   listStudentsFn, assignExamFn, unassignExamFn, toggleLockFn,
   examReportFn, updateExamFn, deleteExamFn, listClassesFn, studentViolationsFn,
+  listGroupsFn, assignGroupsToExamFn,
 } from "@/lib/admin.functions";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, Trash2, Lock, Unlock, Download, FileText, ShieldAlert, X } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Lock, Unlock, Download, FileText, ShieldAlert, X, Pencil, ChevronUp, ChevronDown, Check, Users, Loader2 } from "lucide-react";
 import { generateExamReportPdf, generateStudentResultPdf } from "@/lib/pdf";
 
 export const Route = createFileRoute("/_authenticated/admin/exams/$examId")({
@@ -41,10 +42,20 @@ function ManageExam() {
   );
 }
 
+// ====================== QUESTIONS TAB ======================
+
+type QForm = {
+  question_text: string; option_a: string; option_b: string; option_c: string; option_d: string;
+  correct_option: "A" | "B" | "C" | "D"; marks: number;
+};
+const emptyQ: QForm = { question_text: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A", marks: 1 };
+
 function QuestionsTab({ examId }: { examId: string }) {
   const qc = useQueryClient();
   const list = useServerFn(listExamQuestionsFn);
   const upsert = useServerFn(upsertQuestionsFn);
+  const update = useServerFn(updateQuestionFn);
+  const reorder = useServerFn(reorderQuestionsFn);
   const del = useServerFn(deleteQuestionFn);
 
   const { data, isLoading } = useQuery({
@@ -52,58 +63,127 @@ function QuestionsTab({ examId }: { examId: string }) {
     queryFn: () => list({ data: { exam_id: examId } }),
   });
 
-  const [q, setQ] = useState({ question_text: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A" as "A"|"B"|"C"|"D", marks: 1 });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["exam-questions", examId] });
+
+  const addMut = useMutation({
+    mutationFn: (q: QForm) => upsert({ data: { exam_id: examId, questions: [q] } }),
+    onSuccess: () => { toast.success("Question added"); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const updateMut = useMutation({
+    mutationFn: (vars: QForm & { id: string }) => update({ data: vars }),
+    onSuccess: () => { toast.success("Question updated"); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const delMut = useMutation({
+    mutationFn: (id: string) => del({ data: { id } }),
+    onSuccess: () => { toast.success("Deleted"); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const reorderMut = useMutation({
+    mutationFn: (ids: string[]) => reorder({ data: { exam_id: examId, ordered_ids: ids } }),
+    onSuccess: () => invalidate(),
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const [q, setQ] = useState<QForm>(emptyQ);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState<QForm>(emptyQ);
   const [csv, setCsv] = useState("");
 
-  const addOne = async (e: React.FormEvent) => {
+  const startEdit = (qq: any) => {
+    setEditingId(qq.id);
+    setEditForm({
+      question_text: qq.question_text, option_a: qq.option_a, option_b: qq.option_b,
+      option_c: qq.option_c, option_d: qq.option_d, correct_option: qq.correct_option, marks: qq.marks,
+    });
+  };
+
+  const move = (i: number, dir: -1 | 1) => {
+    const arr = [...(data?.questions ?? [])];
+    const j = i + dir;
+    if (j < 0 || j >= arr.length) return;
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+    // Optimistic
+    qc.setQueryData(["exam-questions", examId], { questions: arr });
+    reorderMut.mutate(arr.map((x: any) => x.id));
+  };
+
+  const addOne = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await upsert({ data: { exam_id: examId, questions: [q] } });
-      toast.success("Question added");
-      setQ({ question_text: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A", marks: 1 });
-      qc.invalidateQueries({ queryKey: ["exam-questions", examId] });
-    } catch (e: any) { toast.error(e.message); }
+    addMut.mutate(q, { onSuccess: () => setQ(emptyQ) });
   };
 
   const importCsv = async () => {
     const lines = csv.trim().split("\n").filter(Boolean);
-    const parsed: any[] = [];
+    const parsed: QForm[] = [];
     for (const line of lines) {
       const cols = line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
       if (cols.length < 6) continue;
       const [question_text, option_a, option_b, option_c, option_d, correct_option, marks] = cols;
-      parsed.push({ question_text, option_a, option_b, option_c, option_d, correct_option: correct_option.toUpperCase(), marks: parseInt(marks ?? "1") || 1 });
+      parsed.push({ question_text, option_a, option_b, option_c, option_d, correct_option: correct_option.toUpperCase() as any, marks: parseInt(marks ?? "1") || 1 });
     }
     if (!parsed.length) return toast.error("No valid rows");
     try {
       const res = await upsert({ data: { exam_id: examId, questions: parsed } });
       toast.success(`Imported ${res.inserted} questions`);
       setCsv("");
-      qc.invalidateQueries({ queryKey: ["exam-questions", examId] });
+      invalidate();
     } catch (e: any) { toast.error(e.message); }
   };
+
+  const questions = data?.questions ?? [];
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_350px]">
       <div>
         {isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : (
           <div className="space-y-3">
-            {(data?.questions ?? []).map((qq: any, i: number) => (
+            {questions.map((qq: any, i: number) => (
               <div key={qq.id} className="rounded-lg border border-border bg-card p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <p className="text-sm font-medium">{i+1}. {qq.question_text}</p>
-                  <button onClick={async () => { await del({ data: { id: qq.id } }); qc.invalidateQueries({ queryKey: ["exam-questions", examId] }); }} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
-                </div>
-                <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-muted-foreground">
-                  {(["A","B","C","D"] as const).map((opt) => (
-                    <div key={opt} className={opt === qq.correct_option ? "text-success font-medium" : ""}>
-                      {opt}. {qq[`option_${opt.toLowerCase()}`]}
+                {editingId === qq.id ? (
+                  <div className="space-y-2">
+                    <textarea rows={2} value={editForm.question_text} onChange={(e) => setEditForm({ ...editForm, question_text: e.target.value })} className="inp" />
+                    {(["a","b","c","d"] as const).map((k) => (
+                      <input key={k} placeholder={`Option ${k.toUpperCase()}`} value={(editForm as any)[`option_${k}`]} onChange={(e) => setEditForm({ ...editForm, [`option_${k}`]: e.target.value } as any)} className="inp" />
+                    ))}
+                    <div className="grid grid-cols-2 gap-2">
+                      <select value={editForm.correct_option} onChange={(e) => setEditForm({ ...editForm, correct_option: e.target.value as any })} className="inp">
+                        {["A","B","C","D"].map((o) => <option key={o} value={o}>Correct: {o}</option>)}
+                      </select>
+                      <input type="number" min={1} value={editForm.marks} onChange={(e) => setEditForm({ ...editForm, marks: Math.max(1, parseInt(e.target.value) || 1) })} className="inp" />
                     </div>
-                  ))}
-                </div>
+                    <div className="flex gap-2">
+                      <button disabled={updateMut.isPending} onClick={() => updateMut.mutate({ id: qq.id, ...editForm }, { onSuccess: () => setEditingId(null) })} className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                        {updateMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
+                      </button>
+                      <button onClick={() => setEditingId(null)} className="inline-flex h-8 items-center rounded-md border border-border px-3 text-xs hover:bg-secondary">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-sm font-medium">{i + 1}. {qq.question_text}</p>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button title="Move up" disabled={i === 0 || reorderMut.isPending} onClick={() => move(i, -1)} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronUp className="h-4 w-4" /></button>
+                        <button title="Move down" disabled={i === questions.length - 1 || reorderMut.isPending} onClick={() => move(i, 1)} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronDown className="h-4 w-4" /></button>
+                        <button title="Edit" onClick={() => startEdit(qq)} className="text-muted-foreground hover:text-foreground"><Pencil className="h-3.5 w-3.5" /></button>
+                        <button title="Delete" onClick={() => { if (confirm("Delete this question?")) delMut.mutate(qq.id); }} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
+                      </div>
+                    </div>
+                    <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-muted-foreground">
+                      {(["A","B","C","D"] as const).map((opt) => (
+                        <div key={opt} className={opt === qq.correct_option ? "text-success font-medium" : ""}>
+                          {opt}. {qq[`option_${opt.toLowerCase()}`]}
+                        </div>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-[10px] text-muted-foreground">Marks: {qq.marks}</p>
+                  </>
+                )}
               </div>
             ))}
-            {(data?.questions ?? []).length === 0 && <p className="text-sm text-muted-foreground">No questions yet.</p>}
+            {questions.length === 0 && <p className="text-sm text-muted-foreground">No questions yet.</p>}
           </div>
         )}
       </div>
@@ -118,9 +198,11 @@ function QuestionsTab({ examId }: { examId: string }) {
             <select value={q.correct_option} onChange={(e) => setQ({ ...q, correct_option: e.target.value as any })} className="inp">
               {["A","B","C","D"].map((o) => <option key={o} value={o}>Correct: {o}</option>)}
             </select>
-            <input type="number" min={1} value={q.marks} onChange={(e) => setQ({ ...q, marks: parseInt(e.target.value) || 1 })} className="inp" />
+            <input type="number" min={1} value={q.marks} onChange={(e) => setQ({ ...q, marks: Math.max(1, parseInt(e.target.value) || 1) })} className="inp" />
           </div>
-          <button className="h-9 w-full rounded-md bg-primary text-xs font-medium text-primary-foreground hover:bg-primary/90 inline-flex items-center justify-center gap-1"><Plus className="h-3 w-3"/>Add</button>
+          <button disabled={addMut.isPending} className="h-9 w-full rounded-md bg-primary text-xs font-medium text-primary-foreground hover:bg-primary/90 inline-flex items-center justify-center gap-1 disabled:opacity-50">
+            {addMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />} Add
+          </button>
         </form>
 
         <div className="rounded-lg border border-border bg-card p-4 space-y-3">
@@ -135,17 +217,23 @@ function QuestionsTab({ examId }: { examId: string }) {
   );
 }
 
+// ====================== ASSIGN TAB ======================
+
 function AssignTab({ examId }: { examId: string }) {
   const qc = useQueryClient();
   const listSt = useServerFn(listStudentsFn);
   const listCls = useServerFn(listClassesFn);
+  const listGrp = useServerFn(listGroupsFn);
   const assign = useServerFn(assignExamFn);
   const unassign = useServerFn(unassignExamFn);
   const lockFn = useServerFn(toggleLockFn);
+  const assignGroups = useServerFn(assignGroupsToExamFn);
   const [search, setSearch] = useState("");
   const [classFilter, setClassFilter] = useState("");
+  const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
 
   const classesQ = useQuery({ queryKey: ["classes"], queryFn: () => listCls() });
+  const groupsQ = useQuery({ queryKey: ["groups"], queryFn: () => listGrp() });
   const studentsQ = useQuery({
     queryKey: ["students", search, classFilter],
     queryFn: () => listSt({ data: { search, class_name: classFilter || undefined } }),
@@ -158,20 +246,88 @@ function AssignTab({ examId }: { examId: string }) {
     },
   });
 
-  const assignedIds = new Set((assignedQ.data ?? []).map((a: any) => a.student_id));
-  const available = (studentsQ.data?.students ?? []).filter((s: any) => !assignedIds.has(s.id));
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["assigned", examId] });
+  const assignedMap = new Map((assignedQ.data ?? []).map((a: any) => [a.student_id, a]));
+  const assignedCount = (assignedQ.data ?? []).length;
 
-  const assignAllVisible = async () => {
-    if (!available.length) return;
-    await assign({ data: { exam_id: examId, student_ids: available.map((s: any) => s.id) } });
-    qc.invalidateQueries({ queryKey: ["assigned", examId] });
-    toast.success(`Assigned ${available.length} student(s)`);
+  const assignMut = useMutation({
+    mutationFn: (studentId: string) => assign({ data: { exam_id: examId, student_ids: [studentId] } }),
+    onSuccess: () => { toast.success("Assigned"); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const unassignMut = useMutation({
+    mutationFn: (studentId: string) => unassign({ data: { exam_id: examId, student_id: studentId } }),
+    onSuccess: () => { toast.success("Unassigned"); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const bulkAssign = useMutation({
+    mutationFn: (ids: string[]) => assign({ data: { exam_id: examId, student_ids: ids } }),
+    onSuccess: (_r, ids) => { toast.success(`Assigned ${ids.length} student(s)`); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const groupAssignMut = useMutation({
+    mutationFn: (groupIds: string[]) => assignGroups({ data: { exam_id: examId, group_ids: groupIds } }),
+    onSuccess: (r) => { toast.success(`Assigned ${r.assigned} student(s) from groups`); setSelectedGroups([]); invalidate(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const toggleAssign = (studentId: string) => {
+    if (assignedMap.has(studentId)) {
+      if (confirm("Unassign this student from the exam?")) unassignMut.mutate(studentId);
+    } else {
+      assignMut.mutate(studentId);
+    }
+  };
+
+  const visible = studentsQ.data?.students ?? [];
+  const visibleUnassigned = visible.filter((s: any) => !assignedMap.has(s.id));
+
+  const assignAllVisible = () => {
+    if (!visibleUnassigned.length) return;
+    bulkAssign.mutate(visibleUnassigned.map((s: any) => s.id));
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-2">
+    <div className="space-y-6">
+      {/* Header with count */}
+      <div className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
+        <div className="flex items-center gap-2 text-sm">
+          <Users className="h-4 w-4 text-muted-foreground" />
+          <span className="font-medium">Assigned to {assignedCount} student{assignedCount === 1 ? "" : "s"}</span>
+        </div>
+      </div>
+
+      {/* Group assignment */}
+      <div className="rounded-lg border border-border bg-card p-4">
+        <div className="mb-2 flex items-center justify-between">
+          <h3 className="text-sm font-semibold">Assign by group / cohort</h3>
+          <Link to="/admin/groups" className="text-xs font-medium text-accent hover:underline">Manage groups →</Link>
+        </div>
+        {(groupsQ.data?.groups ?? []).length === 0 ? (
+          <p className="text-xs text-muted-foreground">No groups yet. Create groups to bulk-assign exams.</p>
+        ) : (
+          <>
+            <div className="flex flex-wrap gap-2">
+              {(groupsQ.data?.groups ?? []).map((g: any) => {
+                const checked = selectedGroups.includes(g.id);
+                return (
+                  <button key={g.id} type="button" onClick={() => setSelectedGroups((s) => checked ? s.filter((x) => x !== g.id) : [...s, g.id])} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${checked ? "border-primary bg-primary/10 text-primary" : "border-border bg-background text-foreground hover:bg-secondary"}`}>
+                    {checked && <Check className="h-3 w-3" />} {g.name} <span className="text-muted-foreground">({g.member_count})</span>
+                  </button>
+                );
+              })}
+            </div>
+            <button disabled={!selectedGroups.length || groupAssignMut.isPending} onClick={() => groupAssignMut.mutate(selectedGroups)} className="mt-3 inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+              {groupAssignMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+              Assign selected groups
+            </button>
+          </>
+        )}
+      </div>
+
+      {/* Student list */}
       <div>
-        <h3 className="mb-2 text-sm font-semibold">Available students</h3>
+        <h3 className="mb-2 text-sm font-semibold">Students</h3>
         <div className="mb-3 grid grid-cols-[1fr_140px] gap-2">
           <input placeholder="Search by name, email, roll…" value={search} onChange={(e) => setSearch(e.target.value)} className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" />
           <select value={classFilter} onChange={(e) => setClassFilter(e.target.value)} className="h-9 rounded-md border border-input bg-background px-2 text-sm">
@@ -179,46 +335,50 @@ function AssignTab({ examId }: { examId: string }) {
             {(classesQ.data?.classes ?? []).map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
-        {classFilter && available.length > 0 && (
-          <button onClick={assignAllVisible} className="mb-2 inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90">
-            <Plus className="h-3 w-3" /> Assign all in "{classFilter}" ({available.length})
+        {classFilter && visibleUnassigned.length > 0 && (
+          <button onClick={assignAllVisible} disabled={bulkAssign.isPending} className="mb-2 inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+            {bulkAssign.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+            Assign all in "{classFilter}" ({visibleUnassigned.length})
           </button>
         )}
-        <div className="space-y-1 max-h-[500px] overflow-y-auto rounded-lg border border-border bg-card p-2">
-          {available.map((s: any) => (
-            <div key={s.id} className="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-secondary">
-              <div>
-                <p className="font-medium">{s.full_name || s.email}</p>
-                <p className="text-xs text-muted-foreground">{s.email}{s.class_name ? ` · ${s.class_name}` : ""}</p>
-              </div>
-              <button onClick={async () => { await assign({ data: { exam_id: examId, student_ids: [s.id] } }); qc.invalidateQueries({ queryKey: ["assigned", examId] }); toast.success("Assigned"); }} className="text-xs font-medium text-accent hover:underline">Assign</button>
-            </div>
-          ))}
-          {available.length === 0 && <p className="px-3 py-4 text-xs text-muted-foreground">No matching students.</p>}
-        </div>
-      </div>
-      <div>
-        <h3 className="mb-2 text-sm font-semibold">Assigned ({(assignedQ.data ?? []).length})</h3>
         <div className="space-y-1 max-h-[540px] overflow-y-auto rounded-lg border border-border bg-card p-2">
-          {(assignedQ.data ?? []).map((a: any) => (
-            <div key={a.student_id} className="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-secondary">
-              <div>
-                <p className="font-medium">{a.profiles?.full_name || a.profiles?.email}</p>
-                <p className="text-xs text-muted-foreground">{a.profiles?.email}{a.profiles?.class_name ? ` · ${a.profiles.class_name}` : ""}</p>
+          {studentsQ.isLoading ? (
+            <p className="px-3 py-4 text-xs text-muted-foreground"><Loader2 className="inline h-3 w-3 animate-spin" /> Loading…</p>
+          ) : visible.length === 0 ? (
+            <p className="px-3 py-4 text-xs text-muted-foreground">No matching students.</p>
+          ) : visible.map((s: any) => {
+            const assigned = assignedMap.get(s.id) as any | undefined;
+            const isPending = (assignMut.isPending && assignMut.variables === s.id) || (unassignMut.isPending && unassignMut.variables === s.id);
+            return (
+              <div key={s.id} className="flex items-center justify-between rounded-md px-3 py-2 text-sm hover:bg-secondary">
+                <div>
+                  <p className="font-medium">{s.full_name || s.email}</p>
+                  <p className="text-xs text-muted-foreground">{s.email}{s.class_name ? ` · ${s.class_name}` : ""}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {assigned && (
+                    <button title={assigned.locked ? "Unlock" : "Lock"} onClick={async () => { await lockFn({ data: { exam_id: examId, student_id: s.id, locked: !assigned.locked } }); invalidate(); }} className="text-muted-foreground hover:text-foreground">
+                      {assigned.locked ? <Lock className="h-3.5 w-3.5 text-destructive" /> : <Unlock className="h-3.5 w-3.5" />}
+                    </button>
+                  )}
+                  <button
+                    disabled={isPending}
+                    onClick={() => toggleAssign(s.id)}
+                    className={`inline-flex h-7 min-w-[88px] items-center justify-center gap-1 rounded-md px-3 text-xs font-medium transition disabled:opacity-50 ${assigned ? "bg-success/10 text-success hover:bg-destructive/10 hover:text-destructive" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
+                  >
+                    {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : assigned ? <><Check className="h-3 w-3" /> Assigned</> : "Assign"}
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button onClick={async () => { await lockFn({ data: { exam_id: examId, student_id: a.student_id, locked: !a.locked } }); qc.invalidateQueries({ queryKey: ["assigned", examId] }); }} className="text-muted-foreground hover:text-foreground">
-                  {a.locked ? <Lock className="h-3.5 w-3.5 text-destructive" /> : <Unlock className="h-3.5 w-3.5" />}
-                </button>
-                <button onClick={async () => { await unassign({ data: { exam_id: examId, student_id: a.student_id } }); qc.invalidateQueries({ queryKey: ["assigned", examId] }); }} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-3.5 w-3.5" /></button>
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
+
+// ====================== RESULTS TAB (unchanged) ======================
 
 function ResultsTab({ examId }: { examId: string }) {
   const report = useServerFn(examReportFn);
@@ -381,7 +541,6 @@ function ViolationDialog({ examId, studentId, examMeta, onClose }: { examId: str
                 </>
               )}
             </dl>
-
             <div className="mt-5 flex items-center justify-between">
               <h4 className="text-sm font-semibold">Violation log ({data.violations.length})</h4>
               <button onClick={downloadPdf} className="inline-flex h-8 items-center gap-1 rounded-md border border-border bg-background px-3 text-xs font-medium hover:bg-secondary">
@@ -416,7 +575,10 @@ function ViolationDialog({ examId, studentId, examMeta, onClose }: { examId: str
   );
 }
 
+// ====================== SETTINGS TAB ======================
+
 function SettingsTab({ examId }: { examId: string }) {
+  const qc = useQueryClient();
   const update = useServerFn(updateExamFn);
   const del = useServerFn(deleteExamFn);
   const { data, isLoading } = useQuery({
@@ -424,27 +586,46 @@ function SettingsTab({ examId }: { examId: string }) {
     queryFn: async () => (await supabase.from("exams").select("*").eq("id", examId).maybeSingle()).data,
   });
   const [form, setForm] = useState<any>(null);
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (data && !form) setForm({
-    ...data,
-    start_at: data.start_at ? new Date(data.start_at).toISOString().slice(0,16) : "",
-    end_at: data.end_at ? new Date(data.end_at).toISOString().slice(0,16) : "",
-  });
-  if (!form) return null;
 
-  const save = async (e: React.FormEvent) => {
+  // Initialize form once data loads (no setState during render bug)
+  useEffect(() => {
+    if (data && !form) {
+      setForm({
+        ...data,
+        duration_minutes: data.duration_minutes ?? 30,
+        start_at: data.start_at ? toLocalInput(data.start_at) : "",
+        end_at: data.end_at ? toLocalInput(data.end_at) : "",
+      });
+    }
+  }, [data, form]);
+
+  const saveMut = useMutation({
+    mutationFn: async (f: any) => update({ data: {
+      id: examId,
+      title: f.title, description: f.description, category: f.category,
+      duration_minutes: f.duration_minutes,
+      timer_enabled: f.timer_enabled,
+      start_at: f.start_at ? new Date(f.start_at).toISOString() : null,
+      end_at: f.end_at ? new Date(f.end_at).toISOString() : null,
+      is_published: f.is_published,
+    }}),
+    onSuccess: () => {
+      toast.success("Settings saved");
+      qc.invalidateQueries({ queryKey: ["exam", examId] });
+      qc.invalidateQueries({ queryKey: ["admin-overview"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  if (isLoading || !form) return <p className="text-sm text-muted-foreground"><Loader2 className="inline h-3 w-3 animate-spin" /> Loading…</p>;
+
+  const save = (e: React.FormEvent) => {
     e.preventDefault();
-    try {
-      await update({ data: {
-        id: examId,
-        title: form.title, description: form.description, category: form.category,
-        duration_minutes: form.duration_minutes, timer_enabled: form.timer_enabled,
-        start_at: form.start_at ? new Date(form.start_at).toISOString() : null,
-        end_at: form.end_at ? new Date(form.end_at).toISOString() : null,
-        is_published: form.is_published,
-      }});
-      toast.success("Saved");
-    } catch (e: any) { toast.error(e.message); }
+    const dur = parseInt(String(form.duration_minutes));
+    if (!Number.isFinite(dur) || dur < 1 || dur > 600) {
+      return toast.error("Duration must be between 1 and 600 minutes");
+    }
+    saveMut.mutate({ ...form, duration_minutes: dur });
   };
 
   return (
@@ -454,17 +635,34 @@ function SettingsTab({ examId }: { examId: string }) {
       <div className="grid grid-cols-2 gap-3">
         <label className="block"><span className="text-xs text-muted-foreground">Category</span>
           <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} className="inp2"><option value="aptitude">Aptitude</option><option value="softskill">Softskill</option></select></label>
-        <label className="block"><span className="text-xs text-muted-foreground">Duration (min)</span><input type="number" value={form.duration_minutes} onChange={(e) => setForm({ ...form, duration_minutes: parseInt(e.target.value) || 0 })} className="inp2" /></label>
+        <label className="block">
+          <span className="text-xs text-muted-foreground">Duration (min)</span>
+          <input
+            type="number" min={1} max={600} required
+            value={form.duration_minutes ?? ""}
+            onChange={(e) => setForm({ ...form, duration_minutes: e.target.value === "" ? "" : Math.max(1, parseInt(e.target.value) || 1) })}
+            className="inp2"
+          />
+        </label>
         <label className="block"><span className="text-xs text-muted-foreground">Start</span><input type="datetime-local" value={form.start_at} onChange={(e) => setForm({ ...form, start_at: e.target.value })} className="inp2" /></label>
         <label className="block"><span className="text-xs text-muted-foreground">End</span><input type="datetime-local" value={form.end_at} onChange={(e) => setForm({ ...form, end_at: e.target.value })} className="inp2" /></label>
       </div>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.timer_enabled} onChange={(e) => setForm({ ...form, timer_enabled: e.target.checked })} /> Enable timer</label>
       <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.is_published} onChange={(e) => setForm({ ...form, is_published: e.target.checked })} /> Published</label>
       <div className="flex gap-2">
-        <button className="h-10 flex-1 rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90">Save</button>
+        <button disabled={saveMut.isPending} className="h-10 flex-1 rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 inline-flex items-center justify-center gap-1">
+          {saveMut.isPending && <Loader2 className="h-3 w-3 animate-spin" />} Save
+        </button>
         <button type="button" onClick={async () => { if (confirm("Delete exam?")) { await del({ data: { id: examId } }); toast.success("Deleted"); window.location.href = "/admin"; } }} className="h-10 rounded-md border border-destructive bg-destructive/10 px-4 text-sm font-medium text-destructive hover:bg-destructive/20">Delete</button>
       </div>
       <style>{`.inp2 { display:block; width:100%; height:2.5rem; border-radius:0.375rem; border:1px solid var(--color-input); background:var(--color-background); padding:0 0.75rem; font-size:0.875rem; outline:none; margin-top:0.25rem;} textarea.inp2 { height:auto; padding:0.5rem 0.75rem; }`}</style>
     </form>
   );
+}
+
+// Convert ISO to local datetime-local input value (preserves local time)
+function toLocalInput(iso: string): string {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
