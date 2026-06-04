@@ -7,10 +7,10 @@ import {
   upsertQuestionsFn, deleteQuestionFn, listExamQuestionsFn, updateQuestionFn, reorderQuestionsFn,
   listStudentsFn, assignExamFn, unassignExamFn, toggleLockFn,
   examReportFn, updateExamFn, deleteExamFn, listClassesFn, studentViolationsFn,
-  listGroupsFn, assignGroupsToExamFn,
+  listGroupsFn, assignGroupsToExamFn, grantReEntryFn,
 } from "@/lib/admin.functions";
 import { toast } from "sonner";
-import { ArrowLeft, Plus, Trash2, Lock, Unlock, Download, FileText, ShieldAlert, X, Pencil, ChevronUp, ChevronDown, Check, Users, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Lock, Unlock, Download, FileText, ShieldAlert, X, Pencil, ChevronUp, ChevronDown, Check, Users, Loader2, RotateCcw } from "lucide-react";
 import { generateExamReportPdf, generateStudentResultPdf } from "@/lib/pdf";
 
 export const Route = createFileRoute("/_authenticated/admin/exams/$examId")({
@@ -44,11 +44,103 @@ function ManageExam() {
 
 // ====================== QUESTIONS TAB ======================
 
+const LETTERS = ["A","B","C","D","E","F"];
+
 type QForm = {
-  question_text: string; option_a: string; option_b: string; option_c: string; option_d: string;
-  correct_option: "A" | "B" | "C" | "D"; marks: number;
+  question_type: "mcq" | "fill_blank";
+  question_text: string;
+  options: string[];
+  correct_option: string;
+  accepted_answers: string[];
+  marks: number;
 };
-const emptyQ: QForm = { question_text: "", option_a: "", option_b: "", option_c: "", option_d: "", correct_option: "A", marks: 1 };
+const emptyQ: QForm = { question_type: "mcq", question_text: "", options: ["","","",""], correct_option: "A", accepted_answers: [""], marks: 1 };
+
+function questionFromRow(qq: any): QForm {
+  const opts = Array.isArray(qq.options) && qq.options.length
+    ? qq.options
+    : [qq.option_a, qq.option_b, qq.option_c, qq.option_d].filter((x) => typeof x === "string" && x.length);
+  return {
+    question_type: (qq.question_type ?? "mcq") as "mcq" | "fill_blank",
+    question_text: qq.question_text,
+    options: opts.length ? opts : ["",""],
+    correct_option: qq.correct_option ?? "A",
+    accepted_answers: Array.isArray(qq.accepted_answers) && qq.accepted_answers.length ? qq.accepted_answers : [""],
+    marks: qq.marks ?? 1,
+  };
+}
+
+function QuestionForm({ value, onChange }: { value: QForm; onChange: (q: QForm) => void }) {
+  const setOpt = (i: number, v: string) => {
+    const next = [...value.options]; next[i] = v;
+    onChange({ ...value, options: next });
+  };
+  const addOption = () => {
+    if (value.options.length >= 6) return;
+    onChange({ ...value, options: [...value.options, ""] });
+  };
+  const removeOption = (i: number) => {
+    if (value.options.length <= 2) return;
+    const next = value.options.filter((_, j) => j !== i);
+    let correct = value.correct_option;
+    const curIdx = LETTERS.indexOf(correct);
+    if (curIdx === i) correct = "A";
+    else if (curIdx > i) correct = LETTERS[curIdx - 1];
+    onChange({ ...value, options: next, correct_option: correct });
+  };
+  const setAcc = (i: number, v: string) => {
+    const next = [...value.accepted_answers]; next[i] = v;
+    onChange({ ...value, accepted_answers: next });
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <select value={value.question_type} onChange={(e) => onChange({ ...value, question_type: e.target.value as any })} className="inp">
+          <option value="mcq">Multiple Choice</option>
+          <option value="fill_blank">Fill in the Blank</option>
+        </select>
+        <input type="number" min={1} value={value.marks} onChange={(e) => onChange({ ...value, marks: Math.max(1, parseInt(e.target.value) || 1) })} placeholder="Marks" className="inp w-24" />
+      </div>
+      <textarea required placeholder="Question text" rows={2} value={value.question_text} onChange={(e) => onChange({ ...value, question_text: e.target.value })} className="inp" />
+
+      {value.question_type === "mcq" ? (
+        <>
+          <div className="space-y-2">
+            {value.options.map((opt, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <input type="radio" checked={value.correct_option === LETTERS[i]} onChange={() => onChange({ ...value, correct_option: LETTERS[i] })} />
+                  {LETTERS[i]}
+                </label>
+                <input required placeholder={`Option ${LETTERS[i]}`} value={opt} onChange={(e) => setOpt(i, e.target.value)} className="inp flex-1" />
+                <button type="button" onClick={() => removeOption(i)} disabled={value.options.length <= 2} className="text-muted-foreground hover:text-destructive disabled:opacity-30"><X className="h-3.5 w-3.5" /></button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={addOption} disabled={value.options.length >= 6} className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-3 text-[11px] hover:bg-secondary disabled:opacity-40">
+            <Plus className="h-3 w-3" /> Add option ({value.options.length}/6)
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">Accepted answers (case-insensitive match)</p>
+          <div className="space-y-2">
+            {value.accepted_answers.map((a, i) => (
+              <div key={i} className="flex items-center gap-2">
+                <input required placeholder={`Answer ${i + 1}`} value={a} onChange={(e) => setAcc(i, e.target.value)} className="inp flex-1" />
+                <button type="button" onClick={() => onChange({ ...value, accepted_answers: value.accepted_answers.filter((_, j) => j !== i) })} disabled={value.accepted_answers.length <= 1} className="text-muted-foreground hover:text-destructive disabled:opacity-30"><X className="h-3.5 w-3.5" /></button>
+              </div>
+            ))}
+          </div>
+          <button type="button" onClick={() => onChange({ ...value, accepted_answers: [...value.accepted_answers, ""] })} className="inline-flex h-7 items-center gap-1 rounded-md border border-border bg-background px-3 text-[11px] hover:bg-secondary">
+            <Plus className="h-3 w-3" /> Add accepted answer
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
 
 function QuestionsTab({ examId }: { examId: string }) {
   const qc = useQueryClient();
@@ -89,14 +181,10 @@ function QuestionsTab({ examId }: { examId: string }) {
   const [q, setQ] = useState<QForm>(emptyQ);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<QForm>(emptyQ);
-  const [csv, setCsv] = useState("");
 
   const startEdit = (qq: any) => {
     setEditingId(qq.id);
-    setEditForm({
-      question_text: qq.question_text, option_a: qq.option_a, option_b: qq.option_b,
-      option_c: qq.option_c, option_d: qq.option_d, correct_option: qq.correct_option, marks: qq.marks,
-    });
+    setEditForm(questionFromRow(qq));
   };
 
   const move = (i: number, dir: -1 | 1) => {
@@ -104,7 +192,6 @@ function QuestionsTab({ examId }: { examId: string }) {
     const j = i + dir;
     if (j < 0 || j >= arr.length) return;
     [arr[i], arr[j]] = [arr[j], arr[i]];
-    // Optimistic
     qc.setQueryData(["exam-questions", examId], { questions: arr });
     reorderMut.mutate(arr.map((x: any) => x.id));
   };
@@ -114,28 +201,10 @@ function QuestionsTab({ examId }: { examId: string }) {
     addMut.mutate(q, { onSuccess: () => setQ(emptyQ) });
   };
 
-  const importCsv = async () => {
-    const lines = csv.trim().split("\n").filter(Boolean);
-    const parsed: QForm[] = [];
-    for (const line of lines) {
-      const cols = line.split(",").map((c) => c.trim().replace(/^"|"$/g, ""));
-      if (cols.length < 6) continue;
-      const [question_text, option_a, option_b, option_c, option_d, correct_option, marks] = cols;
-      parsed.push({ question_text, option_a, option_b, option_c, option_d, correct_option: correct_option.toUpperCase() as any, marks: parseInt(marks ?? "1") || 1 });
-    }
-    if (!parsed.length) return toast.error("No valid rows");
-    try {
-      const res = await upsert({ data: { exam_id: examId, questions: parsed } });
-      toast.success(`Imported ${res.inserted} questions`);
-      setCsv("");
-      invalidate();
-    } catch (e: any) { toast.error(e.message); }
-  };
-
   const questions = data?.questions ?? [];
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_350px]">
+    <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
       <div>
         {isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : (
           <div className="space-y-3">
@@ -143,16 +212,7 @@ function QuestionsTab({ examId }: { examId: string }) {
               <div key={qq.id} className="rounded-lg border border-border bg-card p-4">
                 {editingId === qq.id ? (
                   <div className="space-y-2">
-                    <textarea rows={2} value={editForm.question_text} onChange={(e) => setEditForm({ ...editForm, question_text: e.target.value })} className="inp" />
-                    {(["a","b","c","d"] as const).map((k) => (
-                      <input key={k} placeholder={`Option ${k.toUpperCase()}`} value={(editForm as any)[`option_${k}`]} onChange={(e) => setEditForm({ ...editForm, [`option_${k}`]: e.target.value } as any)} className="inp" />
-                    ))}
-                    <div className="grid grid-cols-2 gap-2">
-                      <select value={editForm.correct_option} onChange={(e) => setEditForm({ ...editForm, correct_option: e.target.value as any })} className="inp">
-                        {["A","B","C","D"].map((o) => <option key={o} value={o}>Correct: {o}</option>)}
-                      </select>
-                      <input type="number" min={1} value={editForm.marks} onChange={(e) => setEditForm({ ...editForm, marks: Math.max(1, parseInt(e.target.value) || 1) })} className="inp" />
-                    </div>
+                    <QuestionForm value={editForm} onChange={setEditForm} />
                     <div className="flex gap-2">
                       <button disabled={updateMut.isPending} onClick={() => updateMut.mutate({ id: qq.id, ...editForm }, { onSuccess: () => setEditingId(null) })} className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
                         {updateMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save
@@ -163,7 +223,12 @@ function QuestionsTab({ examId }: { examId: string }) {
                 ) : (
                   <>
                     <div className="flex items-start justify-between gap-3">
-                      <p className="text-sm font-medium">{i + 1}. {qq.question_text}</p>
+                      <p className="text-sm font-medium">
+                        {i + 1}. {qq.question_text}
+                        <span className="ml-2 rounded bg-secondary px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                          {qq.question_type === "fill_blank" ? "Fill" : "MCQ"}
+                        </span>
+                      </p>
                       <div className="flex shrink-0 items-center gap-1">
                         <button title="Move up" disabled={i === 0 || reorderMut.isPending} onClick={() => move(i, -1)} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronUp className="h-4 w-4" /></button>
                         <button title="Move down" disabled={i === questions.length - 1 || reorderMut.isPending} onClick={() => move(i, 1)} className="text-muted-foreground hover:text-foreground disabled:opacity-30"><ChevronDown className="h-4 w-4" /></button>
@@ -171,13 +236,22 @@ function QuestionsTab({ examId }: { examId: string }) {
                         <button title="Delete" onClick={() => { if (confirm("Delete this question?")) delMut.mutate(qq.id); }} className="text-muted-foreground hover:text-destructive"><Trash2 className="h-4 w-4" /></button>
                       </div>
                     </div>
-                    <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-muted-foreground">
-                      {(["A","B","C","D"] as const).map((opt) => (
-                        <div key={opt} className={opt === qq.correct_option ? "text-success font-medium" : ""}>
-                          {opt}. {qq[`option_${opt.toLowerCase()}`]}
-                        </div>
-                      ))}
-                    </div>
+                    {qq.question_type === "fill_blank" ? (
+                      <div className="mt-2 text-xs text-muted-foreground">
+                        Accepted: <span className="text-success font-medium">{(qq.accepted_answers ?? []).join(" | ")}</span>
+                      </div>
+                    ) : (
+                      <div className="mt-2 grid grid-cols-2 gap-1.5 text-xs text-muted-foreground">
+                        {(Array.isArray(qq.options) && qq.options.length ? qq.options : [qq.option_a, qq.option_b, qq.option_c, qq.option_d].filter(Boolean)).map((text: string, idx: number) => {
+                          const letter = LETTERS[idx];
+                          return (
+                            <div key={idx} className={letter === qq.correct_option ? "text-success font-medium" : ""}>
+                              {letter}. {text}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                     <p className="mt-2 text-[10px] text-muted-foreground">Marks: {qq.marks}</p>
                   </>
                 )}
@@ -190,27 +264,11 @@ function QuestionsTab({ examId }: { examId: string }) {
       <div className="space-y-6">
         <form onSubmit={addOne} className="rounded-lg border border-border bg-card p-4 space-y-3">
           <h3 className="text-sm font-semibold">Add question</h3>
-          <textarea required placeholder="Question" rows={2} value={q.question_text} onChange={(e) => setQ({ ...q, question_text: e.target.value })} className="inp" />
-          {(["a","b","c","d"] as const).map((k) => (
-            <input key={k} required placeholder={`Option ${k.toUpperCase()}`} value={(q as any)[`option_${k}`]} onChange={(e) => setQ({ ...q, [`option_${k}`]: e.target.value } as any)} className="inp" />
-          ))}
-          <div className="grid grid-cols-2 gap-2">
-            <select value={q.correct_option} onChange={(e) => setQ({ ...q, correct_option: e.target.value as any })} className="inp">
-              {["A","B","C","D"].map((o) => <option key={o} value={o}>Correct: {o}</option>)}
-            </select>
-            <input type="number" min={1} value={q.marks} onChange={(e) => setQ({ ...q, marks: Math.max(1, parseInt(e.target.value) || 1) })} className="inp" />
-          </div>
+          <QuestionForm value={q} onChange={setQ} />
           <button disabled={addMut.isPending} className="h-9 w-full rounded-md bg-primary text-xs font-medium text-primary-foreground hover:bg-primary/90 inline-flex items-center justify-center gap-1 disabled:opacity-50">
             {addMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />} Add
           </button>
         </form>
-
-        <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-          <h3 className="text-sm font-semibold">Bulk CSV import</h3>
-          <p className="text-xs text-muted-foreground">Format: question,a,b,c,d,correct,marks</p>
-          <textarea rows={5} value={csv} onChange={(e) => setCsv(e.target.value)} placeholder='"What is 2+2?",2,3,4,5,C,1' className="inp font-mono text-[11px]" />
-          <button onClick={importCsv} className="h-9 w-full rounded-md border border-border bg-background text-xs font-medium hover:bg-secondary">Import CSV</button>
-        </div>
       </div>
       <style>{`.inp { display:block; width:100%; min-height:2.25rem; border-radius:0.375rem; border:1px solid var(--color-input); background:var(--color-background); padding:0.4rem 0.625rem; font-size:0.8rem; outline:none; } .inp:focus { box-shadow:0 0 0 2px var(--color-ring); }`}</style>
     </div>
@@ -238,36 +296,50 @@ function AssignTab({ examId }: { examId: string }) {
     queryKey: ["students", search, classFilter],
     queryFn: () => listSt({ data: { search, class_name: classFilter || undefined } }),
   });
+  const assignedKey = ["assigned", examId];
   const assignedQ = useQuery({
-    queryKey: ["assigned", examId],
+    queryKey: assignedKey,
     queryFn: async () => {
-      const { data } = await supabase.from("assigned_tests").select("student_id, locked, profiles(full_name, email, roll_number, class_name)").eq("exam_id", examId);
+      const { data } = await supabase.from("assigned_tests").select("student_id, locked").eq("exam_id", examId);
       return data ?? [];
     },
   });
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["assigned", examId] });
   const assignedMap = new Map((assignedQ.data ?? []).map((a: any) => [a.student_id, a]));
   const assignedCount = (assignedQ.data ?? []).length;
 
   const assignMut = useMutation({
     mutationFn: (studentId: string) => assign({ data: { exam_id: examId, student_ids: [studentId] } }),
-    onSuccess: () => { toast.success("Assigned"); invalidate(); },
-    onError: (e: any) => toast.error(e.message),
+    onMutate: async (studentId) => {
+      await qc.cancelQueries({ queryKey: assignedKey });
+      const prev = qc.getQueryData<any[]>(assignedKey) ?? [];
+      qc.setQueryData(assignedKey, [...prev, { student_id: studentId, locked: false }]);
+      return { prev };
+    },
+    onError: (e: any, _id, ctx) => { qc.setQueryData(assignedKey, ctx?.prev ?? []); toast.error(e.message); },
+    onSuccess: () => toast.success("Assigned"),
+    onSettled: () => qc.invalidateQueries({ queryKey: assignedKey }),
   });
   const unassignMut = useMutation({
     mutationFn: (studentId: string) => unassign({ data: { exam_id: examId, student_id: studentId } }),
-    onSuccess: () => { toast.success("Unassigned"); invalidate(); },
-    onError: (e: any) => toast.error(e.message),
+    onMutate: async (studentId) => {
+      await qc.cancelQueries({ queryKey: assignedKey });
+      const prev = qc.getQueryData<any[]>(assignedKey) ?? [];
+      qc.setQueryData(assignedKey, prev.filter((a) => a.student_id !== studentId));
+      return { prev };
+    },
+    onError: (e: any, _id, ctx) => { qc.setQueryData(assignedKey, ctx?.prev ?? []); toast.error(e.message); },
+    onSuccess: () => toast.success("Unassigned"),
+    onSettled: () => qc.invalidateQueries({ queryKey: assignedKey }),
   });
   const bulkAssign = useMutation({
     mutationFn: (ids: string[]) => assign({ data: { exam_id: examId, student_ids: ids } }),
-    onSuccess: (_r, ids) => { toast.success(`Assigned ${ids.length} student(s)`); invalidate(); },
+    onSuccess: (_r, ids) => { toast.success(`Assigned ${ids.length} student(s)`); qc.invalidateQueries({ queryKey: assignedKey }); },
     onError: (e: any) => toast.error(e.message),
   });
   const groupAssignMut = useMutation({
     mutationFn: (groupIds: string[]) => assignGroups({ data: { exam_id: examId, group_ids: groupIds } }),
-    onSuccess: (r) => { toast.success(`Assigned ${r.assigned} student(s) from groups`); setSelectedGroups([]); invalidate(); },
+    onSuccess: (r) => { toast.success(`Assigned ${r.assigned} student(s) from groups`); setSelectedGroups([]); qc.invalidateQueries({ queryKey: assignedKey }); },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -289,7 +361,6 @@ function AssignTab({ examId }: { examId: string }) {
 
   return (
     <div className="space-y-6">
-      {/* Header with count */}
       <div className="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3">
         <div className="flex items-center gap-2 text-sm">
           <Users className="h-4 w-4 text-muted-foreground" />
@@ -297,7 +368,6 @@ function AssignTab({ examId }: { examId: string }) {
         </div>
       </div>
 
-      {/* Group assignment */}
       <div className="rounded-lg border border-border bg-card p-4">
         <div className="mb-2 flex items-center justify-between">
           <h3 className="text-sm font-semibold">Assign by group / cohort</h3>
@@ -325,7 +395,6 @@ function AssignTab({ examId }: { examId: string }) {
         )}
       </div>
 
-      {/* Student list */}
       <div>
         <h3 className="mb-2 text-sm font-semibold">Students</h3>
         <div className="mb-3 grid grid-cols-[1fr_140px] gap-2">
@@ -357,14 +426,14 @@ function AssignTab({ examId }: { examId: string }) {
                 </div>
                 <div className="flex items-center gap-2">
                   {assigned && (
-                    <button title={assigned.locked ? "Unlock" : "Lock"} onClick={async () => { await lockFn({ data: { exam_id: examId, student_id: s.id, locked: !assigned.locked } }); invalidate(); }} className="text-muted-foreground hover:text-foreground">
+                    <button title={assigned.locked ? "Unlock" : "Lock"} onClick={async () => { await lockFn({ data: { exam_id: examId, student_id: s.id, locked: !assigned.locked } }); qc.invalidateQueries({ queryKey: assignedKey }); }} className="text-muted-foreground hover:text-foreground">
                       {assigned.locked ? <Lock className="h-3.5 w-3.5 text-destructive" /> : <Unlock className="h-3.5 w-3.5" />}
                     </button>
                   )}
                   <button
                     disabled={isPending}
                     onClick={() => toggleAssign(s.id)}
-                    className={`inline-flex h-7 min-w-[88px] items-center justify-center gap-1 rounded-md px-3 text-xs font-medium transition disabled:opacity-50 ${assigned ? "bg-success/10 text-success hover:bg-destructive/10 hover:text-destructive" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
+                    className={`inline-flex h-7 min-w-[100px] items-center justify-center gap-1 rounded-md px-3 text-xs font-medium transition disabled:opacity-50 ${assigned ? "border border-success bg-success/15 text-success hover:bg-destructive/10 hover:text-destructive hover:border-destructive" : "bg-primary text-primary-foreground hover:bg-primary/90"}`}
                   >
                     {isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : assigned ? <><Check className="h-3 w-3" /> Assigned</> : "Assign"}
                   </button>
@@ -378,13 +447,28 @@ function AssignTab({ examId }: { examId: string }) {
   );
 }
 
-// ====================== RESULTS TAB (unchanged) ======================
+// ====================== RESULTS TAB ======================
 
 function ResultsTab({ examId }: { examId: string }) {
+  const qc = useQueryClient();
   const report = useServerFn(examReportFn);
+  const reentry = useServerFn(grantReEntryFn);
   const { data, isLoading } = useQuery({ queryKey: ["exam-report", examId], queryFn: () => report({ data: { exam_id: examId } }) });
   const [classFilter, setClassFilter] = useState("");
   const [violationFor, setViolationFor] = useState<string | null>(null);
+  const [reentryFor, setReentryFor] = useState<{ studentId: string; name: string } | null>(null);
+  const [reentryReason, setReentryReason] = useState("");
+
+  const reentryMut = useMutation({
+    mutationFn: (vars: { student_id: string; reason: string }) =>
+      reentry({ data: { exam_id: examId, student_id: vars.student_id, reason: vars.reason } }),
+    onSuccess: () => {
+      toast.success("Re-entry granted. Student can now resume.");
+      setReentryFor(null); setReentryReason("");
+      qc.invalidateQueries({ queryKey: ["exam-report", examId] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
 
   if (isLoading || !data) return <p className="text-sm text-muted-foreground">Loading…</p>;
 
@@ -481,7 +565,14 @@ function ResultsTab({ examId }: { examId: string }) {
                     <span className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${r ? "bg-success/10 text-success" : "bg-muted text-muted-foreground"}`}>{r ? (r.auto_submitted ? "Auto-submitted" : "Submitted") : "Pending"}</span>
                   </td>
                   <td className="px-3 py-2 text-right">
-                    {r && <button onClick={() => setViolationFor(a.student_id)} className="text-xs font-medium text-accent hover:underline">Details</button>}
+                    <div className="flex justify-end gap-2">
+                      {r?.auto_submitted && (
+                        <button onClick={() => setReentryFor({ studentId: a.student_id, name: p?.full_name || p?.email || "student" })} className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline">
+                          <RotateCcw className="h-3 w-3" /> Allow re-entry
+                        </button>
+                      )}
+                      {r && <button onClick={() => setViolationFor(a.student_id)} className="text-xs font-medium text-accent hover:underline">Details</button>}
+                    </div>
                   </td>
                 </tr>
               );
@@ -494,6 +585,22 @@ function ResultsTab({ examId }: { examId: string }) {
       </div>
       {violationFor && (
         <ViolationDialog examId={examId} studentId={violationFor} examMeta={data.exam} onClose={() => setViolationFor(null)} />
+      )}
+      {reentryFor && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setReentryFor(null)}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-lg border border-border bg-card p-6 shadow-xl">
+            <h3 className="text-base font-semibold">Allow re-entry for {reentryFor.name}</h3>
+            <p className="mt-1 text-xs text-muted-foreground">This will clear the auto-submitted result, unlock the student, and let them resume from where they left off. Action is logged.</p>
+            <label className="mt-4 block text-xs font-medium">Reason (required)</label>
+            <textarea rows={3} value={reentryReason} onChange={(e) => setReentryReason(e.target.value)} placeholder="e.g. Accidental tab switch — network issue confirmed." className="mt-1 w-full rounded-md border border-input bg-background px-3 py-2 text-sm" />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setReentryFor(null)} className="inline-flex h-9 items-center rounded-md border border-border px-3 text-xs hover:bg-secondary">Cancel</button>
+              <button disabled={!reentryReason.trim() || reentryMut.isPending} onClick={() => reentryMut.mutate({ student_id: reentryFor.studentId, reason: reentryReason.trim() })} className="inline-flex h-9 items-center gap-1 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+                {reentryMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <RotateCcw className="h-3 w-3" />} Grant re-entry
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -577,6 +684,12 @@ function ViolationDialog({ examId, studentId, examMeta, onClose }: { examId: str
 
 // ====================== SETTINGS TAB ======================
 
+function toLocalInput(iso: string) {
+  const d = new Date(iso);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function SettingsTab({ examId }: { examId: string }) {
   const qc = useQueryClient();
   const update = useServerFn(updateExamFn);
@@ -587,7 +700,6 @@ function SettingsTab({ examId }: { examId: string }) {
   });
   const [form, setForm] = useState<any>(null);
 
-  // Initialize form once data loads (no setState during render bug)
   useEffect(() => {
     if (data && !form) {
       setForm({
@@ -614,6 +726,12 @@ function SettingsTab({ examId }: { examId: string }) {
       qc.invalidateQueries({ queryKey: ["exam", examId] });
       qc.invalidateQueries({ queryKey: ["admin-overview"] });
     },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () => del({ data: { id: examId } }),
+    onSuccess: () => { toast.success("Deleted"); window.location.href = "/admin"; },
     onError: (e: any) => toast.error(e.message),
   });
 
@@ -644,25 +762,26 @@ function SettingsTab({ examId }: { examId: string }) {
             className="inp2"
           />
         </label>
-        <label className="block"><span className="text-xs text-muted-foreground">Start</span><input type="datetime-local" value={form.start_at} onChange={(e) => setForm({ ...form, start_at: e.target.value })} className="inp2" /></label>
-        <label className="block"><span className="text-xs text-muted-foreground">End</span><input type="datetime-local" value={form.end_at} onChange={(e) => setForm({ ...form, end_at: e.target.value })} className="inp2" /></label>
       </div>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.timer_enabled} onChange={(e) => setForm({ ...form, timer_enabled: e.target.checked })} /> Enable timer</label>
-      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.is_published} onChange={(e) => setForm({ ...form, is_published: e.target.checked })} /> Published</label>
-      <div className="flex gap-2">
-        <button disabled={saveMut.isPending} className="h-10 flex-1 rounded-md bg-primary text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 inline-flex items-center justify-center gap-1">
-          {saveMut.isPending && <Loader2 className="h-3 w-3 animate-spin" />} Save
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block"><span className="text-xs text-muted-foreground">Start at</span>
+          <input type="datetime-local" value={form.start_at} onChange={(e) => setForm({ ...form, start_at: e.target.value })} className="inp2" /></label>
+        <label className="block"><span className="text-xs text-muted-foreground">End at</span>
+          <input type="datetime-local" value={form.end_at} onChange={(e) => setForm({ ...form, end_at: e.target.value })} className="inp2" /></label>
+      </div>
+      <div className="flex items-center gap-6">
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.timer_enabled} onChange={(e) => setForm({ ...form, timer_enabled: e.target.checked })} /> Timer enabled</label>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.is_published} onChange={(e) => setForm({ ...form, is_published: e.target.checked })} /> Published</label>
+      </div>
+      <div className="flex items-center justify-between pt-3">
+        <button type="submit" disabled={saveMut.isPending} className="inline-flex h-9 items-center gap-1 rounded-md bg-primary px-4 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50">
+          {saveMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />} Save settings
         </button>
-        <button type="button" onClick={async () => { if (confirm("Delete exam?")) { await del({ data: { id: examId } }); toast.success("Deleted"); window.location.href = "/admin"; } }} className="h-10 rounded-md border border-destructive bg-destructive/10 px-4 text-sm font-medium text-destructive hover:bg-destructive/20">Delete</button>
+        <button type="button" onClick={() => { if (confirm("Delete this exam and all questions/results? Cannot be undone.")) deleteMut.mutate(); }} className="inline-flex h-9 items-center gap-1 rounded-md border border-destructive/40 px-4 text-xs font-medium text-destructive hover:bg-destructive/10">
+          <Trash2 className="h-3 w-3" /> Delete exam
+        </button>
       </div>
-      <style>{`.inp2 { display:block; width:100%; height:2.5rem; border-radius:0.375rem; border:1px solid var(--color-input); background:var(--color-background); padding:0 0.75rem; font-size:0.875rem; outline:none; margin-top:0.25rem;} textarea.inp2 { height:auto; padding:0.5rem 0.75rem; }`}</style>
+      <style>{`.inp2 { display:block; width:100%; height:2.5rem; border-radius:0.375rem; border:1px solid var(--color-input); background:var(--color-background); padding:0 0.75rem; font-size:0.875rem; outline:none; margin-top:0.25rem; } textarea.inp2 { height:auto; padding:0.5rem 0.75rem; }`}</style>
     </form>
   );
-}
-
-// Convert ISO to local datetime-local input value (preserves local time)
-function toLocalInput(iso: string): string {
-  const d = new Date(iso);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }

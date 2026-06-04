@@ -64,19 +64,54 @@ export const deleteExamFn = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const questionShape = z.object({
+  question_type: z.enum(["mcq", "fill_blank"]).default("mcq"),
+  question_text: z.string().min(1).max(2000),
+  options: z.array(z.string().min(1).max(500)).max(6).default([]),
+  correct_option: z.string().max(2).optional().nullable(),
+  accepted_answers: z.array(z.string().min(1).max(500)).max(20).default([]),
+  marks: z.number().int().min(1).max(100).default(1),
+}).superRefine((q, ctx) => {
+  if (q.question_type === "mcq") {
+    if (q.options.length < 2) ctx.addIssue({ code: "custom", message: "MCQ needs at least 2 options" });
+    const valid = ["A","B","C","D","E","F"].slice(0, q.options.length);
+    if (!q.correct_option || !valid.includes(q.correct_option)) ctx.addIssue({ code: "custom", message: "Invalid correct_option" });
+  } else if (q.accepted_answers.length < 1) {
+    ctx.addIssue({ code: "custom", message: "Fill-blank needs at least 1 accepted answer" });
+  }
+});
+
+function questionRow(q: z.infer<typeof questionShape>) {
+  if (q.question_type === "mcq") {
+    return {
+      question_type: "mcq",
+      question_text: q.question_text,
+      options: q.options,
+      accepted_answers: [],
+      correct_option: q.correct_option,
+      marks: q.marks,
+      option_a: q.options[0] ?? null,
+      option_b: q.options[1] ?? null,
+      option_c: q.options[2] ?? null,
+      option_d: q.options[3] ?? null,
+    };
+  }
+  return {
+    question_type: "fill_blank",
+    question_text: q.question_text,
+    options: [],
+    accepted_answers: q.accepted_answers,
+    correct_option: null,
+    marks: q.marks,
+    option_a: null, option_b: null, option_c: null, option_d: null,
+  };
+}
+
 export const upsertQuestionsFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: any) => z.object({
     exam_id: z.string().uuid(),
-    questions: z.array(z.object({
-      question_text: z.string().min(1).max(2000),
-      option_a: z.string().min(1).max(500),
-      option_b: z.string().min(1).max(500),
-      option_c: z.string().min(1).max(500),
-      option_d: z.string().min(1).max(500),
-      correct_option: z.enum(["A","B","C","D"]),
-      marks: z.number().int().min(1).max(100).default(1),
-    })).min(1).max(500),
+    questions: z.array(questionShape).min(1).max(500),
     replace: z.boolean().optional(),
   }).parse(d))
   .handler(async ({ data, context }) => {
@@ -89,7 +124,7 @@ export const upsertQuestionsFn = createServerFn({ method: "POST" })
       .from("questions").select("position").eq("exam_id", data.exam_id)
       .order("position", { ascending: false }).limit(1).maybeSingle();
     let pos = (maxRow?.position ?? 0);
-    const rows = data.questions.map((q) => ({ ...q, exam_id: data.exam_id, position: ++pos }));
+    const rows = data.questions.map((q) => ({ ...questionRow(q), exam_id: data.exam_id, position: ++pos }));
     const { error } = await supabase.from("questions").insert(rows);
     if (error) throw new Error(error.message);
     const { count } = await supabase.from("questions").select("id", { count: "exact", head: true }).eq("exam_id", data.exam_id);
@@ -99,21 +134,13 @@ export const upsertQuestionsFn = createServerFn({ method: "POST" })
 
 export const updateQuestionFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: any) => z.object({
-    id: z.string().uuid(),
-    question_text: z.string().min(1).max(2000),
-    option_a: z.string().min(1).max(500),
-    option_b: z.string().min(1).max(500),
-    option_c: z.string().min(1).max(500),
-    option_d: z.string().min(1).max(500),
-    correct_option: z.enum(["A","B","C","D"]),
-    marks: z.number().int().min(1).max(100),
-  }).parse(d))
+  .inputValidator((d: any) => z.object({ id: z.string().uuid() }).passthrough().parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     await assertAdmin(supabase, userId);
-    const { id, ...patch } = data;
-    const { error } = await supabase.from("questions").update(patch).eq("id", id);
+    const { id, ...rest } = data as any;
+    const parsed = questionShape.parse(rest);
+    const { error } = await supabase.from("questions").update(questionRow(parsed)).eq("id", id);
     if (error) throw new Error(error.message);
     return { ok: true };
   });
@@ -389,4 +416,54 @@ export const assignGroupsToExamFn = createServerFn({ method: "POST" })
     const { error } = await supabase.from("assigned_tests").upsert(rows, { onConflict: "exam_id,student_id" });
     if (error) throw new Error(error.message);
     return { ok: true, assigned: rows.length };
+  });
+
+// ===== Admin re-entry override =====
+
+export const grantReEntryFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    exam_id: z.string().uuid(),
+    student_id: z.string().uuid(),
+    reason: z.string().min(1).max(500),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // Remove the previously auto-submitted result so the student can resume.
+    await supabaseAdmin.from("results").delete()
+      .eq("exam_id", data.exam_id).eq("student_id", data.student_id);
+
+    // Unlock and stamp re-entry metadata
+    const { error: uErr } = await supabaseAdmin.from("assigned_tests").update({
+      locked: false,
+      re_entry_allowed: true,
+      re_entry_reason: data.reason,
+      re_entered_at: new Date().toISOString(),
+      re_entered_by: userId,
+    }).eq("exam_id", data.exam_id).eq("student_id", data.student_id);
+    if (uErr) throw new Error(uErr.message);
+
+    // Audit log
+    await supabaseAdmin.from("violations").insert({
+      exam_id: data.exam_id,
+      student_id: data.student_id,
+      violation: "admin_re_entry" as any,
+      detail: `Re-entry granted by admin ${userId}. Reason: ${data.reason}`,
+    });
+
+    return { ok: true };
+  });
+
+export const listExamSessionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({ exam_id: z.string().uuid(), student_id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { data: session } = await supabase.from("exam_sessions")
+      .select("*").eq("exam_id", data.exam_id).eq("student_id", data.student_id).maybeSingle();
+    return { session };
   });
