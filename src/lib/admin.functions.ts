@@ -417,3 +417,53 @@ export const assignGroupsToExamFn = createServerFn({ method: "POST" })
     if (error) throw new Error(error.message);
     return { ok: true, assigned: rows.length };
   });
+
+// ===== Admin re-entry override =====
+
+export const grantReEntryFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    exam_id: z.string().uuid(),
+    student_id: z.string().uuid(),
+    reason: z.string().min(1).max(500),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // Remove the previously auto-submitted result so the student can resume.
+    await supabaseAdmin.from("results").delete()
+      .eq("exam_id", data.exam_id).eq("student_id", data.student_id);
+
+    // Unlock and stamp re-entry metadata
+    const { error: uErr } = await supabaseAdmin.from("assigned_tests").update({
+      locked: false,
+      re_entry_allowed: true,
+      re_entry_reason: data.reason,
+      re_entered_at: new Date().toISOString(),
+      re_entered_by: userId,
+    }).eq("exam_id", data.exam_id).eq("student_id", data.student_id);
+    if (uErr) throw new Error(uErr.message);
+
+    // Audit log
+    await supabaseAdmin.from("violations").insert({
+      exam_id: data.exam_id,
+      student_id: data.student_id,
+      violation: "admin_re_entry" as any,
+      detail: `Re-entry granted by admin ${userId}. Reason: ${data.reason}`,
+    });
+
+    return { ok: true };
+  });
+
+export const listExamSessionFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({ exam_id: z.string().uuid(), student_id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    const { data: session } = await supabase.from("exam_sessions")
+      .select("*").eq("exam_id", data.exam_id).eq("student_id", data.student_id).maybeSingle();
+    return { session };
+  });
