@@ -21,6 +21,10 @@ export type Database = {
           exam_id: string
           id: string
           locked: boolean
+          re_entered_at: string | null
+          re_entered_by: string | null
+          re_entry_allowed: boolean
+          re_entry_reason: string | null
           student_id: string
         }
         Insert: {
@@ -29,6 +33,10 @@ export type Database = {
           exam_id: string
           id?: string
           locked?: boolean
+          re_entered_at?: string | null
+          re_entered_by?: string | null
+          re_entry_allowed?: boolean
+          re_entry_reason?: string | null
           student_id: string
         }
         Update: {
@@ -37,11 +45,59 @@ export type Database = {
           exam_id?: string
           id?: string
           locked?: boolean
+          re_entered_at?: string | null
+          re_entered_by?: string | null
+          re_entry_allowed?: boolean
+          re_entry_reason?: string | null
           student_id?: string
         }
         Relationships: [
           {
             foreignKeyName: "assigned_tests_exam_id_fkey"
+            columns: ["exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exam_sessions: {
+        Row: {
+          answers: Json
+          created_at: string
+          elapsed_seconds: number
+          exam_id: string
+          id: string
+          last_saved_at: string
+          started_at: string
+          student_id: string
+          updated_at: string
+        }
+        Insert: {
+          answers?: Json
+          created_at?: string
+          elapsed_seconds?: number
+          exam_id: string
+          id?: string
+          last_saved_at?: string
+          started_at?: string
+          student_id: string
+          updated_at?: string
+        }
+        Update: {
+          answers?: Json
+          created_at?: string
+          elapsed_seconds?: number
+          exam_id?: string
+          id?: string
+          last_saved_at?: string
+          started_at?: string
+          student_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exam_sessions_exam_id_fkey"
             columns: ["exam_id"]
             isOneToOne: false
             referencedRelation: "exams"
@@ -188,43 +244,52 @@ export type Database = {
       }
       questions: {
         Row: {
-          correct_option: string
+          accepted_answers: Json
+          correct_option: string | null
           created_at: string
           exam_id: string
           id: string
           marks: number
-          option_a: string
-          option_b: string
-          option_c: string
-          option_d: string
+          option_a: string | null
+          option_b: string | null
+          option_c: string | null
+          option_d: string | null
+          options: Json
           position: number
           question_text: string
+          question_type: string
         }
         Insert: {
-          correct_option: string
+          accepted_answers?: Json
+          correct_option?: string | null
           created_at?: string
           exam_id: string
           id?: string
           marks?: number
-          option_a: string
-          option_b: string
-          option_c: string
-          option_d: string
+          option_a?: string | null
+          option_b?: string | null
+          option_c?: string | null
+          option_d?: string | null
+          options?: Json
           position?: number
           question_text: string
+          question_type?: string
         }
         Update: {
-          correct_option?: string
+          accepted_answers?: Json
+          correct_option?: string | null
           created_at?: string
           exam_id?: string
           id?: string
           marks?: number
-          option_a?: string
-          option_b?: string
-          option_c?: string
-          option_d?: string
+          option_a?: string | null
+          option_b?: string | null
+          option_c?: string | null
+          option_d?: string | null
+          options?: Json
           position?: number
           question_text?: string
+          question_type?: string
         }
         Relationships: [
           {
@@ -364,6 +429,7 @@ export type Database = {
         | "visibility_hidden"
         | "copy_paste"
         | "right_click"
+        | "admin_re_entry"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -499,6 +565,7 @@ export const Constants = {
         "visibility_hidden",
         "copy_paste",
         "right_click",
+        "admin_re_entry",
       ],
     },
   },
