@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useServerFn } from "@tanstack/react-start";
-import { startExamFn, submitExamFn, recordViolationFn } from "@/lib/exam.functions";
+import { startExamFn, submitExamFn, recordViolationFn, saveProgressFn } from "@/lib/exam.functions";
 import { toast } from "sonner";
 import { AlertTriangle, Clock, Maximize2 } from "lucide-react";
 
@@ -10,7 +10,15 @@ export const Route = createFileRoute("/_authenticated/exam/$examId")({
   component: ExamPage,
 });
 
-type Q = { id: string; question_text: string; option_a: string; option_b: string; option_c: string; option_d: string };
+type Q = {
+  id: string;
+  question_type: "mcq" | "fill_blank";
+  question_text: string;
+  options: string[];
+  marks: number;
+};
+
+const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
 function ExamPage() {
   const { examId } = Route.useParams();
@@ -18,6 +26,7 @@ function ExamPage() {
   const startFn = useServerFn(startExamFn);
   const submitFn = useServerFn(submitExamFn);
   const violationFn = useServerFn(recordViolationFn);
+  const saveFn = useServerFn(saveProgressFn);
 
   const [phase, setPhase] = useState<"intro" | "loading" | "active" | "submitting" | "done">("intro");
   const [exam, setExam] = useState<any>(null);
@@ -27,14 +36,17 @@ function ExamPage() {
   const [remaining, setRemaining] = useState(0);
   const [violations, setViolations] = useState(0);
   const startedAtRef = useRef<string>("");
+  const totalSecondsRef = useRef<number>(0);
   const submittedRef = useRef(false);
+  const answersRef = useRef(answers);
+  answersRef.current = answers;
 
   const doSubmit = useCallback(async (auto = false) => {
     if (submittedRef.current) return;
     submittedRef.current = true;
     setPhase("submitting");
     try {
-      await submitFn({ data: { examId, answers, autoSubmitted: auto, startedAt: startedAtRef.current } });
+      await submitFn({ data: { examId, answers: answersRef.current, autoSubmitted: auto, startedAt: startedAtRef.current } });
       if (document.fullscreenElement) await document.exitFullscreen().catch(() => {});
       toast.success(auto ? "Auto-submitted" : "Submitted successfully");
       navigate({ to: "/result/$examId", params: { examId }, replace: true });
@@ -43,7 +55,7 @@ function ExamPage() {
       submittedRef.current = false;
       setPhase("active");
     }
-  }, [answers, examId, navigate, submitFn]);
+  }, [examId, navigate, submitFn]);
 
   const recordV = useCallback((v: string, detail?: string) => {
     setViolations((n) => n + 1);
@@ -58,7 +70,16 @@ function ExamPage() {
     return () => clearTimeout(t);
   }, [phase, remaining, exam, doSubmit]);
 
-  // Anti-cheat listeners
+  // Periodic save every 10s
+  useEffect(() => {
+    if (phase !== "active") return;
+    const i = setInterval(() => {
+      const elapsed = exam?.timer_enabled ? Math.max(0, totalSecondsRef.current - remaining) : 0;
+      saveFn({ data: { examId, answers: answersRef.current, elapsedSeconds: elapsed } }).catch(() => {});
+    }, 10000);
+    return () => clearInterval(i);
+  }, [phase, examId, saveFn, remaining, exam]);
+
   useEffect(() => {
     if (phase !== "active") return;
 
@@ -116,11 +137,15 @@ function ExamPage() {
       return;
     }
     try {
-      const { exam, questions } = await startFn({ data: { examId } });
-      setExam(exam);
-      setQuestions(questions as Q[]);
-      setRemaining(exam.duration_minutes * 60);
-      startedAtRef.current = new Date().toISOString();
+      const res = await startFn({ data: { examId } });
+      setExam(res.exam);
+      setQuestions(res.questions as Q[]);
+      const totalSec = (res.exam.duration_minutes || 0) * 60;
+      totalSecondsRef.current = totalSec;
+      setRemaining(res.session?.remainingSeconds ?? totalSec);
+      setAnswers(res.session?.answers ?? {});
+      startedAtRef.current = res.session?.startedAt ?? new Date().toISOString();
+      if (res.session?.isResume) toast.info("Resuming your previous session.");
       setPhase("active");
     } catch (e: any) {
       toast.error(e.message || "Could not start exam");
@@ -138,7 +163,7 @@ function ExamPage() {
             <li>• You will enter <strong className="text-foreground">fullscreen mode</strong>. Exiting fullscreen will trigger auto-submit.</li>
             <li>• Tab switching, copy/paste and right-click are <strong className="text-foreground">logged as violations</strong>.</li>
             <li>• A countdown timer will auto-submit your answers when time is up.</li>
-            <li>• You can only take this exam <strong className="text-foreground">once</strong>.</li>
+            <li>• Progress is auto-saved. If you're allowed to re-enter, you'll resume where you left off.</li>
           </ul>
           <div className="mt-6 flex items-center gap-3">
             <button onClick={beginExam} className="inline-flex h-11 items-center gap-2 rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:bg-primary/90">
@@ -186,19 +211,32 @@ function ExamPage() {
       <div className="flex-1 overflow-y-auto px-6 py-8">
         <div className="mx-auto max-w-3xl">
           <div className="rounded-lg border border-border bg-card p-6 shadow-[var(--shadow-card)]">
-            <p className="text-base font-medium leading-relaxed">{q.question_text}</p>
-            <div className="mt-6 grid gap-2">
-              {(["A","B","C","D"] as const).map((opt) => {
-                const text = q[`option_${opt.toLowerCase()}` as keyof Q] as string;
-                const sel = answers[q.id] === opt;
-                return (
-                  <label key={opt} className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition ${sel ? "border-primary bg-primary/5" : "border-border hover:bg-secondary"}`}>
-                    <input type="radio" name={q.id} checked={sel} onChange={() => setAnswers({ ...answers, [q.id]: opt })} className="mt-0.5" />
-                    <span><strong className="mr-2">{opt}.</strong>{text}</span>
-                  </label>
-                );
-              })}
-            </div>
+            <p className="text-base font-medium leading-relaxed whitespace-pre-wrap">{q.question_text}</p>
+            {q.question_type === "fill_blank" ? (
+              <div className="mt-6">
+                <input
+                  type="text"
+                  value={answers[q.id] ?? ""}
+                  onChange={(e) => setAnswers({ ...answers, [q.id]: e.target.value })}
+                  placeholder="Type your answer…"
+                  className="h-11 w-full rounded-md border border-input bg-background px-4 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                />
+                <p className="mt-2 text-xs text-muted-foreground">Answer is matched case-insensitively.</p>
+              </div>
+            ) : (
+              <div className="mt-6 grid gap-2">
+                {q.options.map((text, i) => {
+                  const opt = LETTERS[i];
+                  const sel = answers[q.id] === opt;
+                  return (
+                    <label key={opt} className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm transition ${sel ? "border-primary bg-primary/5" : "border-border hover:bg-secondary"}`}>
+                      <input type="radio" name={q.id} checked={sel} onChange={() => setAnswers({ ...answers, [q.id]: opt })} className="mt-0.5" />
+                      <span><strong className="mr-2">{opt}.</strong>{text}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           <div className="mt-6 flex items-center justify-between">
