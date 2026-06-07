@@ -33,7 +33,12 @@ function AdminHome() {
         supabase.from("results").select("id", { count: "exact", head: true }),
         supabase.from("exams").select("*").order("created_at", { ascending: false }).limit(50),
       ]);
-      return { examsCount, studentsCount, resultsCount, exams: exams ?? [] };
+      const ownerIds = [...new Set((exams ?? []).map((e) => e.created_by).filter((id): id is string => !!id))];
+      const { data: profilesData } = ownerIds.length
+        ? await supabase.from("profiles").select("id, email").in("id", ownerIds)
+        : { data: [] };
+      const ownerMap = new Map((profilesData ?? []).map((p) => [p.id, p.email]));
+      return { examsCount, studentsCount, resultsCount, exams: exams ?? [], ownerMap };
     },
     retry: false,
   });
@@ -94,6 +99,7 @@ function AdminHome() {
               <th className="px-4 py-3 text-left font-medium">Duration</th>
               <th className="px-4 py-3 text-left font-medium">Questions</th>
               <th className="px-4 py-3 text-left font-medium">Status</th>
+              <th className="px-4 py-3 text-left font-medium">Owner</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
@@ -111,6 +117,7 @@ function AdminHome() {
                     {e.is_published ? "Published" : "Draft"}
                   </span>
                 </td>
+                <td className="px-4 py-3 text-muted-foreground">{data?.ownerMap.get(e.created_by ?? "") ?? "—"}</td>
                 <td className="px-4 py-3 text-right">
                   <div className="inline-flex items-center gap-3">
                     <button
@@ -141,7 +148,7 @@ function AdminHome() {
             ))}
             {(data?.exams ?? []).length === 0 && (
               <tr>
-                <td colSpan={6} className="px-4 py-10 text-center text-xs text-muted-foreground">
+                <td colSpan={7} className="px-4 py-10 text-center text-xs text-muted-foreground">
                   No exams yet. Create your first one.
                 </td>
               </tr>
