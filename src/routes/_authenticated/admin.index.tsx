@@ -99,6 +99,7 @@ function AdminHome() {
               <th className="px-4 py-3 text-left font-medium">Duration</th>
               <th className="px-4 py-3 text-left font-medium">Questions</th>
               <th className="px-4 py-3 text-left font-medium">Status</th>
+              <th className="px-4 py-3 text-left font-medium">Owner</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
