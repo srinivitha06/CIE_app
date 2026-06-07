@@ -33,7 +33,12 @@ function AdminHome() {
         supabase.from("results").select("id", { count: "exact", head: true }),
         supabase.from("exams").select("*").order("created_at", { ascending: false }).limit(50),
       ]);
-      return { examsCount, studentsCount, resultsCount, exams: exams ?? [] };
+      const ownerIds = [...new Set((exams ?? []).map((e) => e.created_by).filter(Boolean))];
+      const { data: profilesData } = ownerIds.length
+        ? await supabase.from("profiles").select("id, email").in("id", ownerIds)
+        : { data: [] };
+      const ownerMap = new Map((profilesData ?? []).map((p) => [p.id, p.email]));
+      return { examsCount, studentsCount, resultsCount, exams: exams ?? [], ownerMap };
     },
     retry: false,
   });
