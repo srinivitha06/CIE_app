@@ -117,6 +117,7 @@ function AdminHome() {
                     {e.is_published ? "Published" : "Draft"}
                   </span>
                 </td>
+                <td className="px-4 py-3 text-muted-foreground">{data?.ownerMap.get(e.created_by ?? "") ?? "—"}</td>
                 <td className="px-4 py-3 text-right">
                   <div className="inline-flex items-center gap-3">
                     <button
