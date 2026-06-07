@@ -8,6 +8,13 @@ async function assertAdmin(supabase: any, userId: string) {
   if (!roles.includes("admin")) throw new Error("Admin access required.");
 }
 
+async function assertOwnsExam(supabase: any, examId: string, userId: string) {
+  const { data: exam } = await supabase.from("exams").select("id, created_by").eq("id", examId).maybeSingle();
+  if (!exam) throw new Error("Exam not found.");
+  if (exam.created_by !== userId) throw new Error("You do not own this exam.");
+}
+
+
 export const createExamFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: any) => z.object({
