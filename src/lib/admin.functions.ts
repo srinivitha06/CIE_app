@@ -8,6 +8,13 @@ async function assertAdmin(supabase: any, userId: string) {
   if (!roles.includes("admin")) throw new Error("Admin access required.");
 }
 
+async function assertOwnsExam(supabase: any, examId: string, userId: string) {
+  const { data: exam } = await supabase.from("exams").select("id, created_by").eq("id", examId).maybeSingle();
+  if (!exam) throw new Error("Exam not found.");
+  if (exam.created_by !== userId) throw new Error("You do not own this exam.");
+}
+
+
 export const createExamFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: any) => z.object({
@@ -466,4 +473,101 @@ export const listExamSessionFn = createServerFn({ method: "POST" })
     const { data: session } = await supabase.from("exam_sessions")
       .select("*").eq("exam_id", data.exam_id).eq("student_id", data.student_id).maybeSingle();
     return { session };
+  });
+
+// ===== Duplicate & Share =====
+
+async function deepCopyExam(opts: {
+  sourceExamId: string;
+  newOwnerId: string;
+  titleSuffix?: string;
+}) {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  const { data: src, error: srcErr } = await supabaseAdmin
+    .from("exams").select("*").eq("id", opts.sourceExamId).maybeSingle();
+  if (srcErr || !src) throw new Error("Source exam not found.");
+
+  const { id: _id, created_at: _c, updated_at: _u, ...rest } = src as any;
+  const copyTitle = opts.titleSuffix ? `${src.title}${opts.titleSuffix}` : src.title;
+
+  const { data: copy, error: insErr } = await supabaseAdmin.from("exams").insert({
+    ...rest,
+    title: copyTitle,
+    created_by: opts.newOwnerId,
+    is_published: false, // new copy starts as draft
+  }).select().single();
+  if (insErr) throw new Error(insErr.message);
+
+  const { data: questions } = await supabaseAdmin
+    .from("questions").select("*").eq("exam_id", opts.sourceExamId).order("position");
+  if (questions && questions.length) {
+    const rows = questions.map((q: any) => {
+      const { id, created_at, exam_id, ...qrest } = q;
+      return { ...qrest, exam_id: copy.id };
+    });
+    const { error: qErr } = await supabaseAdmin.from("questions").insert(rows);
+    if (qErr) throw new Error(qErr.message);
+  }
+
+  await supabaseAdmin.from("exams")
+    .update({ total_questions: questions?.length ?? 0 }).eq("id", copy.id);
+
+  return copy;
+}
+
+export const duplicateExamFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({ exam_id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    await assertOwnsExam(supabase, data.exam_id, userId);
+    const copy = await deepCopyExam({
+      sourceExamId: data.exam_id,
+      newOwnerId: userId,
+      titleSuffix: " (Copy)",
+    });
+    return { exam: copy };
+  });
+
+export const shareExamByEmailFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: any) => z.object({
+    exam_id: z.string().uuid(),
+    email: z.string().trim().email().max(255),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    await assertAdmin(supabase, userId);
+    await assertOwnsExam(supabase, data.exam_id, userId);
+
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // Find recipient profile by email
+    const normalized = data.email.toLowerCase();
+    const { data: profile } = await supabaseAdmin
+      .from("profiles").select("id, email, full_name").ilike("email", normalized).maybeSingle();
+    if (!profile) throw new Error("No staff account found for that email.");
+    if (profile.id === userId) throw new Error("You already own this exam.");
+
+    // Recipient must be staff (admin role)
+    const { data: roles } = await supabaseAdmin
+      .from("user_roles").select("role").eq("user_id", profile.id);
+    const isAdmin = (roles ?? []).some((r: any) => r.role === "admin");
+    if (!isAdmin) throw new Error("Recipient is not a staff member.");
+
+    const copy = await deepCopyExam({
+      sourceExamId: data.exam_id,
+      newOwnerId: profile.id,
+      titleSuffix: " (Shared)",
+    });
+
+    await supabaseAdmin.from("exam_shares").insert({
+      source_exam_id: data.exam_id,
+      copy_exam_id: copy.id,
+      owner_user_id: userId,
+      shared_with_user_id: profile.id,
+    });
+
+    return { ok: true, recipient: profile.full_name || profile.email };
   });

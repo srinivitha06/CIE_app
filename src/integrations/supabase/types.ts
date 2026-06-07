@@ -105,6 +105,48 @@ export type Database = {
           },
         ]
       }
+      exam_shares: {
+        Row: {
+          copy_exam_id: string | null
+          created_at: string
+          id: string
+          owner_user_id: string
+          shared_with_user_id: string
+          source_exam_id: string | null
+        }
+        Insert: {
+          copy_exam_id?: string | null
+          created_at?: string
+          id?: string
+          owner_user_id: string
+          shared_with_user_id: string
+          source_exam_id?: string | null
+        }
+        Update: {
+          copy_exam_id?: string | null
+          created_at?: string
+          id?: string
+          owner_user_id?: string
+          shared_with_user_id?: string
+          source_exam_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "exam_shares_copy_exam_id_fkey"
+            columns: ["copy_exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "exam_shares_source_exam_id_fkey"
+            columns: ["source_exam_id"]
+            isOneToOne: false
+            referencedRelation: "exams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       exams: {
         Row: {
           category: Database["public"]["Enums"]["exam_category"]
@@ -417,6 +459,10 @@ export type Database = {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
+        Returns: boolean
+      }
+      owns_exam: {
+        Args: { _exam_id: string; _user_id: string }
         Returns: boolean
       }
     }
