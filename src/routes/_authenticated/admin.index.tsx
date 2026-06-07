@@ -33,7 +33,7 @@ function AdminHome() {
         supabase.from("results").select("id", { count: "exact", head: true }),
         supabase.from("exams").select("*").order("created_at", { ascending: false }).limit(50),
       ]);
-      const ownerIds = [...new Set((exams ?? []).map((e) => e.created_by).filter(Boolean))];
+      const ownerIds = [...new Set((exams ?? []).map((e) => e.created_by).filter((id): id is string => !!id))];
       const { data: profilesData } = ownerIds.length
         ? await supabase.from("profiles").select("id, email").in("id", ownerIds)
         : { data: [] };
