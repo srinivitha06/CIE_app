@@ -74,9 +74,11 @@ export const deleteExamFn = createServerFn({ method: "POST" })
 const questionShape = z.object({
   question_type: z.enum(["mcq", "fill_blank"]).default("mcq"),
   question_text: z.string().min(1).max(2000),
-  options: z.array(z.string().min(1).max(500)).max(6).default([]),
+  options: z.array(z.string().max(500)).max(6).default([])
+    .transform((arr) => arr.map((s) => (s ?? "").trim()).filter((s) => s.length > 0)),
   correct_option: z.string().max(2).optional().nullable(),
-  accepted_answers: z.array(z.string().min(1).max(500)).max(20).default([]),
+  accepted_answers: z.array(z.string().max(500)).max(20).default([])
+    .transform((arr) => arr.map((s) => (s ?? "").trim()).filter((s) => s.length > 0)),
   marks: z.number().int().min(1).max(100).default(1),
 }).superRefine((q, ctx) => {
   if (q.question_type === "mcq") {
